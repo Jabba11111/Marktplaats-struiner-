@@ -82,6 +82,7 @@ watchers:
     blacklist:
       - "(?i)(verzilverd|silver plated|plated|versilbert)"
     max_price: 500
+    max_distance_km: 150    # ophalen-only spul: alleen rondom thuis
     value_sources: [catawiki, marktplaats_median]
     min_score: 45
     priority: medium

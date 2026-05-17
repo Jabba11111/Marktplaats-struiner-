@@ -18,6 +18,7 @@ import httpx
 import structlog
 
 from ..models import Listing
+from ..utils.throttle import Throttle
 
 log = structlog.get_logger(__name__)
 
@@ -44,20 +45,10 @@ class MyDealzSource:
             },
             follow_redirects=True,
         )
-        self.request_interval = request_interval
-        self._last_at = 0.0
-        self._lock = asyncio.Lock()
+        self.throttle = Throttle(request_interval)
 
     async def aclose(self) -> None:
         await self._client.aclose()
-
-    async def _throttle(self) -> None:
-        async with self._lock:
-            loop = asyncio.get_event_loop()
-            wait = self.request_interval - (loop.time() - self._last_at)
-            if wait > 0:
-                await asyncio.sleep(wait + random.uniform(0, 1.0))
-            self._last_at = asyncio.get_event_loop().time()
 
     async def search(
         self,
@@ -67,12 +58,14 @@ class MyDealzSource:
     ) -> AsyncIterator[Listing]:
         # MyDealz exposes per-search RSS at /rss/search?q=...
         url = f"{RSS_BASE}/search?q={quote_plus(query)}"
-        await self._throttle()
+        await self.throttle.wait()
         try:
             resp = await self._client.get(url)
+            self.throttle.record_response(resp.status_code)
             resp.raise_for_status()
             xml_text = resp.text
         except Exception as e:
+            self.throttle.record_failure()
             log.warning("mydealz_fetch_failed", error=str(e), q=query)
             return
         for listing in self._parse(xml_text):

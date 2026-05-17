@@ -20,6 +20,8 @@ def app(tmp_path: Path):
         stealth_browser_enabled=False, stealth_browser_headless=True,
         bricklink_consumer_key=None, bricklink_consumer_secret=None,
         bricklink_token=None, bricklink_token_secret=None, reverb_token=None,
+        home_postcode=None, home_country="NL", max_distance_km=None,
+        image_dedup_enabled=False,
     )
     db = Database(cfg.db_path)
     return build_app(cfg, db), db

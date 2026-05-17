@@ -52,6 +52,30 @@ def test_mute_round_trip(tmp_path: Path):
     assert db.remove_mute("ruilen") == 1
 
 
+def test_image_phash_round_trip(tmp_path: Path):
+    db = Database(tmp_path / "t.db")
+    db.upsert_listing(_listing("1", 100))
+    db.set_image_phash("1", "abc123")
+    assert db.find_by_phash("abc123") == "1"
+    assert db.find_by_phash("abc123", exclude_item_id="1") is None
+
+
+def test_image_phash_finds_earlier_item(tmp_path: Path):
+    db = Database(tmp_path / "t.db")
+    db.upsert_listing(_listing("first", 100))
+    db.set_image_phash("first", "samehash")
+    db.upsert_listing(_listing("second", 100))
+    db.set_image_phash("second", "samehash")
+    assert db.find_by_phash("samehash", exclude_item_id="second") == "first"
+
+
+def test_dedup_fingerprint_check_and_register(tmp_path: Path):
+    db = Database(tmp_path / "t.db")
+    assert db.check_and_register_fingerprint("hash1", "item1") is None
+    # Second call: returns prior item_id
+    assert db.check_and_register_fingerprint("hash1", "item2") == "item1"
+
+
 def test_adhoc_watch(tmp_path: Path):
     db = Database(tmp_path / "t.db")
     db.add_adhoc_watch("ThinkPad P1", user_id=42)

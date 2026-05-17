@@ -27,6 +27,7 @@ class Watcher:
     countries: list[str] = field(default_factory=lambda: ["NL"])
     query_overrides: dict[str, str] = field(default_factory=dict)
     sources: list[str] | None = None  # None = all sources matching countries
+    max_distance_km: float | None = None
 
     def query_for_country(self, country: str) -> str:
         return self.query_overrides.get(country, self.query)
@@ -49,6 +50,7 @@ class Watcher:
             countries=d.get("countries", ["NL"]),
             query_overrides=d.get("query_overrides", {}),
             sources=d.get("sources"),
+            max_distance_km=d.get("max_distance_km"),
         )
 
 
@@ -98,6 +100,10 @@ class Config:
     bricklink_token: str | None
     bricklink_token_secret: str | None
     reverb_token: str | None
+    home_postcode: str | None
+    home_country: str
+    max_distance_km: float | None
+    image_dedup_enabled: bool
 
 
 def load_config(watchers_path: Path = Path("config/watchers.yaml")) -> Config:
@@ -136,4 +142,9 @@ def load_config(watchers_path: Path = Path("config/watchers.yaml")) -> Config:
         bricklink_token=os.getenv("BRICKLINK_TOKEN") or None,
         bricklink_token_secret=os.getenv("BRICKLINK_TOKEN_SECRET") or None,
         reverb_token=os.getenv("REVERB_TOKEN") or None,
+        home_postcode=os.getenv("HOME_POSTCODE") or None,
+        home_country=os.getenv("HOME_COUNTRY", "NL").upper(),
+        max_distance_km=float(os.getenv("MAX_DISTANCE_KM"))
+            if os.getenv("MAX_DISTANCE_KM", "").strip() else None,
+        image_dedup_enabled=_bool("IMAGE_DEDUP_ENABLED", True),
     )

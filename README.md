@@ -19,9 +19,14 @@ browser voor sites met anti-bot, en zes waardebronnen.
 - **Auction loop** elk uur (lagere prio, lots met `ends_at`).
 - **Batch backfill** dagelijks, dieper pagineren.
 - **Price-drop recheck** elke 6 uur — alert opnieuw als prijs ≥5% zakt.
-- **Cross-site dedup**: zelfde verkoper post hetzelfde op
-  Marktplaats + 2dehands → één alert. Hash op `genormaliseerde_titel +
-  prijs_afgerond_op_5`.
+- **Cross-site dedup**: zelfde item op meerdere sites → één alert.
+  Twee-laags: pHash van thumbnail (Pillow + imagehash) als sterkste
+  signaal, val terug op hash van `genormaliseerde_titel + prijs_op_5`.
+- **Postcode-distance filter**: per watcher of globaal. Resolved via
+  `pgeocode` (NL/BE/DE postcodes). Vereist `HOME_POSTCODE` in `.env`.
+- **Adaptive throttle**: per source verdubbelt de wachttijd bij 3
+  opeenvolgende 429/403/5xx, vervalt langzaam (10%/req) terug naar
+  baseline na succes. Geconfigureerd op alle 10 HTML/RSS sources.
 - **Stealth browser** (patchright + fingerprint rotatie) voor sites die
   plain HTTP-clients blokkeren. Geïnspireerd op CloakBrowser.
 - **6 waardebronnen**:
@@ -132,10 +137,11 @@ Klaar (huidige branch):
 - ✅ `countries` + `query_overrides` per watcher
 - ✅ **Sprint D**: Hood.de, Aukro.de, Quoka.de, Auctionet,
   Lot-tissimo, MyDealz RSS
+- ✅ **Sprint E**: pHash image dedup, `max_distance_km` postcode-filter,
+  adaptive throttle bij 429/403/5xx
 
-**Resterend**: Sprint E (pHash image dedup, `max_distance_km`
-postcode-filter, auto-tuning request_interval bij 429s). Zie
-[`docs/PHASE2_PLAN.md`](docs/PHASE2_PLAN.md).
+Fase 2 compleet. Zie [`docs/PHASE2_PLAN.md`](docs/PHASE2_PLAN.md) voor
+de oorspronkelijke planning.
 
 ## Layout
 
@@ -156,6 +162,10 @@ src/treasure_scanner/
     app.py
     templates/*.html
     static/style.css
+  utils/                      shared helpers
+    phash.py                  async perceptual image hash
+    location.py               postcode → coords + haversine
+    throttle.py               adaptive interval per source
   sources/                    listing sources (16 total)
     base.py                   Source protocol
     marktplaats.py            Adevinta family (mkpl, 2dh, 2em)

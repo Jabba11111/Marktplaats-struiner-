@@ -13,6 +13,8 @@ from .db import Database
 from .evaluator import evaluate, listing_passes_watcher, matches_keyword_sweep
 from .models import Listing
 from .sources.base import Source
+from .utils.location import LocationResolver
+from .utils.phash import compute_phash, phash_fingerprint
 from .valuation.base import ValuationSource
 
 if TYPE_CHECKING:
@@ -52,6 +54,7 @@ class Scanner:
         notifier: "TelegramNotifier",
         valuation_sources: dict[str, ValuationSource],
         priority_source: str = "marktplaats",
+        location_resolver: LocationResolver | None = None,
     ):
         self.cfg = cfg
         self.db = db
@@ -59,6 +62,9 @@ class Scanner:
         self.notifier = notifier
         self.valuation_sources = valuation_sources
         self.priority_source = priority_source
+        self.location_resolver = location_resolver or LocationResolver(
+            cfg.home_postcode, cfg.home_country,
+        )
 
     # --- helpers ---
 
@@ -86,6 +92,27 @@ class Scanner:
                 return v
         return None
 
+    def _passes_distance(self, listing: Listing, watcher: Watcher) -> bool:
+        max_km = watcher.max_distance_km if watcher.max_distance_km is not None \
+                 else self.cfg.max_distance_km
+        if not max_km or not self.location_resolver.enabled:
+            return True
+        d = self.location_resolver.distance_km(listing.location, listing.country)
+        if d is None:
+            # Location not resolvable -> let it through, evaluator notes it.
+            return True
+        return d <= max_km
+
+    async def _maybe_compute_phash(self, listing: Listing, is_new: bool) -> str | None:
+        if not self.cfg.image_dedup_enabled:
+            return None
+        if not is_new or not listing.thumbnail_url:
+            return None
+        phash = await compute_phash(listing.thumbnail_url)
+        if phash:
+            self.db.set_image_phash(listing.item_id, phash)
+        return phash
+
     async def _process_listing(
         self,
         listing: Listing,
@@ -102,6 +129,9 @@ class Scanner:
 
         passes, _ = listing_passes_watcher(listing, watcher)
         if not passes:
+            return
+
+        if not self._passes_distance(listing, watcher):
             return
 
         valuation = await self._value_listing(listing, watcher.value_sources)
@@ -121,13 +151,29 @@ class Scanner:
 
         # Cross-site dedup — only on initial alerts, never on price drops.
         if dropped_from is None:
-            fp = _fingerprint(listing)
-            existing = self.db.check_and_register_fingerprint(fp, listing.item_id)
+            phash = await self._maybe_compute_phash(listing, is_new)
+
+            existing: str | None = None
+            # 1. Image-hash match (strongest signal)
+            if phash:
+                existing = self.db.find_by_phash(phash, exclude_item_id=listing.item_id)
+                if existing is None:
+                    # Register the phash as a fingerprint too so a later
+                    # listing without phash but identical title still dedups.
+                    self.db.check_and_register_fingerprint(
+                        phash_fingerprint(phash), listing.item_id,
+                    )
+
+            # 2. Title+price hash fallback
+            if existing is None:
+                fp = _fingerprint(listing)
+                existing = self.db.check_and_register_fingerprint(fp, listing.item_id)
+
             if existing and existing != listing.item_id:
                 log.info("dedup_suppressed", watcher=watcher.name,
                          site=listing.site, title=listing.title[:60],
-                         prior=existing)
-                # Record an alert row so we don't keep checking this listing.
+                         prior=existing,
+                         method="phash" if phash else "title")
                 self.db.record_alert(listing.item_id, watcher.name,
                                      ev.score, telegram_message_id=None)
                 return

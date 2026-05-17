@@ -18,6 +18,7 @@ from selectolax.parser import HTMLParser
 
 from ..browser import StealthBrowser
 from ..models import Listing
+from ..utils.throttle import Throttle
 
 log = structlog.get_logger(__name__)
 
@@ -52,32 +53,28 @@ class BVASource:
             },
             follow_redirects=True,
         )
-        self.request_interval = request_interval
-        self._last_at = 0.0
-        self._lock = asyncio.Lock()
+        self.throttle = Throttle(request_interval)
 
     async def aclose(self) -> None:
         await self._client.aclose()
 
-    async def _throttle(self) -> None:
-        async with self._lock:
-            loop = asyncio.get_event_loop()
-            wait = self.request_interval - (loop.time() - self._last_at)
-            if wait > 0:
-                await asyncio.sleep(wait + random.uniform(0, 1.0))
-            self._last_at = asyncio.get_event_loop().time()
-
     async def _fetch_html(self, url: str) -> str | None:
-        try:
-            if self.use_browser:
+        if self.use_browser:
+            try:
                 return await self.browser.html(url, wait_for="main")
-            await self._throttle()
+            except Exception as e:
+                log.warning("bva_browser_failed", error=str(e), url=url)
+                return None
+        await self.throttle.wait()
+        try:
             resp = await self._client.get(url)
+            self.throttle.record_response(resp.status_code)
             if resp.status_code in (403, 429):
                 return None
             resp.raise_for_status()
             return resp.text
         except Exception as e:
+            self.throttle.record_failure()
             log.warning("bva_fetch_failed", error=str(e), url=url)
             return None
 

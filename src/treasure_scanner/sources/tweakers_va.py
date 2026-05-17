@@ -15,6 +15,7 @@ import structlog
 from selectolax.parser import HTMLParser
 
 from ..models import Listing
+from ..utils.throttle import Throttle
 
 log = structlog.get_logger(__name__)
 
@@ -43,20 +44,10 @@ class TweakersVASource:
             },
             follow_redirects=True,
         )
-        self._request_interval = request_interval
-        self._last_at = 0.0
-        self._lock = asyncio.Lock()
+        self.throttle = Throttle(request_interval)
 
     async def aclose(self) -> None:
         await self._client.aclose()
-
-    async def _throttle(self) -> None:
-        async with self._lock:
-            loop = asyncio.get_event_loop()
-            wait = self._request_interval - (loop.time() - self._last_at)
-            if wait > 0:
-                await asyncio.sleep(wait + random.uniform(0, 0.6))
-            self._last_at = asyncio.get_event_loop().time()
 
     async def search(
         self,
@@ -68,11 +59,13 @@ class TweakersVASource:
             params = {"keyword": query, "sort": "date"}
             if page > 1:
                 params["page"] = page
-            await self._throttle()
+            await self.throttle.wait()
             try:
                 resp = await self._client.get(SEARCH_URL, params=params)
+                self.throttle.record_response(resp.status_code)
                 resp.raise_for_status()
             except Exception as e:
+                self.throttle.record_failure()
                 log.warning("tweakers_va_fetch_failed", error=str(e))
                 return
             for listing in self._parse(resp.text):

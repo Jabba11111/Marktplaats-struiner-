@@ -23,9 +23,11 @@ CREATE TABLE IF NOT EXISTS listings (
     last_seen_at   TEXT NOT NULL,
     last_price     REAL,
     site           TEXT DEFAULT 'marktplaats',
-    country        TEXT DEFAULT 'NL'
+    country        TEXT DEFAULT 'NL',
+    image_phash    TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_listings_site ON listings(site);
+CREATE INDEX IF NOT EXISTS idx_listings_phash ON listings(image_phash);
 
 CREATE TABLE IF NOT EXISTS dedup_fingerprints (
     fingerprint    TEXT PRIMARY KEY,
@@ -102,6 +104,10 @@ class Database:
             conn.execute("ALTER TABLE listings ADD COLUMN site TEXT DEFAULT 'marktplaats'")
         if "country" not in cols:
             conn.execute("ALTER TABLE listings ADD COLUMN country TEXT DEFAULT 'NL'")
+        if "image_phash" not in cols:
+            conn.execute("ALTER TABLE listings ADD COLUMN image_phash TEXT")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_listings_phash "
+                         "ON listings(image_phash)")
 
     @contextmanager
     def connect(self) -> Iterator[sqlite3.Connection]:
@@ -239,6 +245,30 @@ class Database:
             return [dict(r) for r in conn.execute(
                 "SELECT id, query, created_at FROM ad_hoc_watches ORDER BY id"
             )]
+
+    def set_image_phash(self, item_id: str, phash: str) -> None:
+        with self.connect() as conn:
+            conn.execute(
+                "UPDATE listings SET image_phash = ? WHERE item_id = ?",
+                (phash, item_id),
+            )
+
+    def find_by_phash(self, phash: str, exclude_item_id: str | None = None) -> str | None:
+        """Return an earlier item_id sharing this phash, or None."""
+        with self.connect() as conn:
+            if exclude_item_id:
+                row = conn.execute(
+                    "SELECT item_id FROM listings WHERE image_phash = ? "
+                    "AND item_id != ? ORDER BY first_seen_at LIMIT 1",
+                    (phash, exclude_item_id),
+                ).fetchone()
+            else:
+                row = conn.execute(
+                    "SELECT item_id FROM listings WHERE image_phash = ? "
+                    "ORDER BY first_seen_at LIMIT 1",
+                    (phash,),
+                ).fetchone()
+            return row["item_id"] if row else None
 
     # --- cross-site dedup ---
 

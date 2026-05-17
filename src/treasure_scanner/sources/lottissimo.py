@@ -16,6 +16,7 @@ import structlog
 from selectolax.parser import HTMLParser
 
 from ..models import Listing
+from ..utils.throttle import Throttle
 
 log = structlog.get_logger(__name__)
 
@@ -44,20 +45,10 @@ class LotTissimoSource:
             },
             follow_redirects=True,
         )
-        self.request_interval = request_interval
-        self._last_at = 0.0
-        self._lock = asyncio.Lock()
+        self.throttle = Throttle(request_interval)
 
     async def aclose(self) -> None:
         await self._client.aclose()
-
-    async def _throttle(self) -> None:
-        async with self._lock:
-            loop = asyncio.get_event_loop()
-            wait = self.request_interval - (loop.time() - self._last_at)
-            if wait > 0:
-                await asyncio.sleep(wait + random.uniform(0, 0.8))
-            self._last_at = asyncio.get_event_loop().time()
 
     async def search(
         self,
@@ -67,12 +58,14 @@ class LotTissimoSource:
     ) -> AsyncIterator[Listing]:
         for page in range(1, max_pages + 1):
             url = f"{BASE}/de/lots/?searchquery={quote_plus(query)}&page={page}"
-            await self._throttle()
+            await self.throttle.wait()
             try:
                 resp = await self._client.get(url)
+                self.throttle.record_response(resp.status_code)
                 resp.raise_for_status()
                 html = resp.text
             except Exception as e:
+                self.throttle.record_failure()
                 log.warning("lottissimo_fetch_failed", error=str(e))
                 return
             for listing in self._parse(html):

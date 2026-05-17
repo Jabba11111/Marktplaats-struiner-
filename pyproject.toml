@@ -18,6 +18,9 @@ dependencies = [
     "jinja2>=3.1",
     "python-multipart>=0.0.9",
     "patchright>=1.45",
+    "Pillow>=10.0",
+    "ImageHash>=4.3",
+    "pgeocode>=0.5",
 ]
 
 [project.optional-dependencies]
