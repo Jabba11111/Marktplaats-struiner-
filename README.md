@@ -46,23 +46,48 @@ browser voor sites met anti-bot, en zes waardebronnen.
 
 ## Setup
 
-1. `cp .env.example .env` en vul tenminste `TELEGRAM_BOT_TOKEN` +
-   `TELEGRAM_CHAT_ID` in.
+### Windows — start.bat (aanbevolen)
+
+1. Installeer Python 3.11 of nieuwer via [python.org](https://www.python.org/downloads/).
+   **Vink "Add Python to PATH" aan** tijdens de installatie.
+2. Download deze repo (Code → Download ZIP, of `git clone`).
+3. Dubbelklik op `start.bat`. Het script:
+   - maakt een virtual environment in `.venv\`,
+   - installeert alle dependencies,
+   - downloadt Chromium voor de stealth browser (~120 MB, eenmalig),
+   - maakt `.env` aan op basis van `.env.example` en opent Kladblok.
+4. Vul in `.env` minstens `TELEGRAM_BOT_TOKEN` en `TELEGRAM_CHAT_ID`:
    - Bot maken: chat met `@BotFather`, `/newbot`.
    - Chat-id: stuur bericht naar `@userinfobot`.
-2. Optioneel: `EBAY_APP_ID`, `BRICKLINK_*`, `REVERB_TOKEN` voor extra
-   waardebronnen.
-3. `docker compose up -d --build`.
-4. Open `http://NAS:8765` voor het dashboard.
-5. Bot reageert op `/start` in Telegram.
+5. Dubbelklik nogmaals op `start.bat` → scanner draait. Dashboard op
+   <http://localhost:8765>, alerts in Telegram.
 
-Lokaal zonder Docker:
+Volgende keren is alleen stap 5 nodig. Stoppen: Ctrl+C in het venster.
+
+### Linux / macOS — start.sh
 
 ```bash
-pip install -e .
-patchright install chromium    # voor stealth browser
-treasure-scanner
+chmod +x start.sh
+./start.sh        # eerste keer: installeert, vraagt .env
+./start.sh        # daarna: start
 ```
+
+### Docker (alternatief)
+
+```bash
+cp .env.example .env       # vul je tokens in
+docker compose up -d --build
+```
+
+### Optionele extra waardebronnen
+
+In `.env` invullen voor extra precisie:
+
+- `EBAY_APP_ID` — eBay Browse API ([registreren](https://developer.ebay.com/))
+- `BRICKLINK_*` — LEGO sold prices ([registreren](https://www.bricklink.com/v2/api/welcome.page))
+- `REVERB_TOKEN` — audio/instrument sold prices ([account page](https://www.reverb.com/account/api-keys))
+
+Werkt prima zonder. Marktplaats-mediaan + Tweakers + Catawiki dekken de meeste gevallen al.
 
 ## Architectuur
 
