@@ -1,0 +1,33 @@
+{% extends "_base.html" %}
+{% block content %}
+<h2>Mutes</h2>
+
+<form method="post" action="/mutes" class="filter-bar">
+  <label>Patroon
+    <input type="text" name="pattern" placeholder="bijv. ruilen" required>
+  </label>
+  <button type="submit">Mute</button>
+</form>
+
+{% if mutes %}
+<table>
+  <thead><tr><th>Patroon</th><th>Soort</th><th></th></tr></thead>
+  <tbody>
+  {% for pattern, kind in mutes %}
+    <tr>
+      <td><code>{{ pattern }}</code></td>
+      <td>{{ kind }}</td>
+      <td>
+        <form method="post" action="/mutes/delete" style="display:inline">
+          <input type="hidden" name="pattern" value="{{ pattern }}">
+          <button type="submit" class="danger">Unmute</button>
+        </form>
+      </td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p>Geen mutes actief.</p>
+{% endif %}
+{% endblock %}

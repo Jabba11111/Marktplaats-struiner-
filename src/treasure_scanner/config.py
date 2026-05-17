@@ -78,6 +78,17 @@ class Config:
     log_level: str
     live_poll_min: int
     live_poll_max: int
+    recheck_interval_hours: int
+    dashboard_enabled: bool
+    dashboard_host: str
+    dashboard_port: int
+    stealth_browser_enabled: bool
+    stealth_browser_headless: bool
+    bricklink_consumer_key: str | None
+    bricklink_consumer_secret: str | None
+    bricklink_token: str | None
+    bricklink_token_secret: str | None
+    reverb_token: str | None
 
 
 def load_config(watchers_path: Path = Path("config/watchers.yaml")) -> Config:
@@ -91,6 +102,9 @@ def load_config(watchers_path: Path = Path("config/watchers.yaml")) -> Config:
     admin_raw = os.getenv("TELEGRAM_ADMIN_USER_ID", "").strip()
     admin = int(admin_raw) if admin_raw else None
 
+    def _bool(name: str, default: bool) -> bool:
+        return os.getenv(name, str(default)).lower() in ("1", "true", "yes", "on")
+
     return Config(
         watchers=watchers,
         keyword_sweep=sweep,
@@ -102,4 +116,15 @@ def load_config(watchers_path: Path = Path("config/watchers.yaml")) -> Config:
         log_level=os.getenv("LOG_LEVEL", "INFO"),
         live_poll_min=int(os.getenv("LIVE_POLL_MIN_SECONDS", "180")),
         live_poll_max=int(os.getenv("LIVE_POLL_MAX_SECONDS", "300")),
+        recheck_interval_hours=int(os.getenv("RECHECK_INTERVAL_HOURS", "6")),
+        dashboard_enabled=_bool("DASHBOARD_ENABLED", True),
+        dashboard_host=os.getenv("DASHBOARD_HOST", "0.0.0.0"),
+        dashboard_port=int(os.getenv("DASHBOARD_PORT", "8765")),
+        stealth_browser_enabled=_bool("STEALTH_BROWSER_ENABLED", False),
+        stealth_browser_headless=_bool("STEALTH_BROWSER_HEADLESS", True),
+        bricklink_consumer_key=os.getenv("BRICKLINK_CONSUMER_KEY") or None,
+        bricklink_consumer_secret=os.getenv("BRICKLINK_CONSUMER_SECRET") or None,
+        bricklink_token=os.getenv("BRICKLINK_TOKEN") or None,
+        bricklink_token_secret=os.getenv("BRICKLINK_TOKEN_SECRET") or None,
+        reverb_token=os.getenv("REVERB_TOKEN") or None,
     )

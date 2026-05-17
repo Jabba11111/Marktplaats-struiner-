@@ -1,81 +1,164 @@
 # Marktplaats Treasure Scanner
 
-Continuous scanner that watches Marktplaats for under-priced items —
-AI workstations, vintage hifi, antiek — and pushes alerts to Telegram.
+Continue scanner die Marktplaats én Troostwijk watcht voor
+ondergewaardeerde items — AI-workstations, vintage hifi, antiek, LEGO —
+en alerts naar Telegram pusht. Met werkende web-dashboard, stealth
+browser voor sites met anti-bot, en zes waardebronnen.
 
-## Wat het doet
+## Features
 
-- **Live polling**: elke 3–5 min nieuwste listings per watcher (config in `config/watchers.yaml`).
-- **Batch backfill**: 1× per 24u diepere paginering voor bestaande listings.
-- **Evaluator**: regex-filters per watcher + AI-server specs parser
-  (RAM/VRAM/GPU) + waardevergelijking.
-- **Waardebronnen**: mediaan van vergelijkbare actieve Marktplaats listings
-  (default) en eBay sold-listings (optioneel met `EBAY_APP_ID`).
-- **Telegram bot** met commands: `/stats`, `/recent`, `/watch`,
-  `/watches`, `/mute`, `/unmute`, `/mutes`. Inline buttons op elke alert.
-- **Mutes** per merk/woord persisteren in SQLite.
+- **Live polling** Marktplaats (3–5 min) per watcher.
+- **Batch backfill** dagelijks, dieper pagineren.
+- **Price-drop recheck** elke 6 uur — alert opnieuw als prijs ≥5% zakt.
+- **Troostwijk auction loop** ieder uur (lagere prio, lots met `ends_at`).
+- **Stealth browser** (patchright + fingerprint rotatie) voor sites die
+  plain HTTP-clients blokkeren. Geïnspireerd op CloakBrowser.
+- **6 waardebronnen**:
+  - `marktplaats_median` — mediaan van actieve vergelijkbare listings
+  - `ebay_sold` — eBay sold-listings (Finding API, EUR-approx)
+  - `tweakers` — Pricewatch retail-mediaan (hardware)
+  - `bricklink` — 6-mnd sold avg (LEGO sets, OAuth1)
+  - `reverb` — sold median (audio/instrumenten, Bearer token)
+  - `catawiki` — closed-lot scraping via stealth browser (antiek/kunst)
+- **Telegram bot** met `/start /help /stats /recent /watch /watches
+  /mute /unmute /mutes` + inline action buttons op iedere alert.
+- **Web dashboard** op `:8765` met statspagina, listings-filter,
+  alerts-grid, watcher-beheer (toevoegen/verwijderen ad-hoc),
+  mute-beheer.
 
 ## Setup
 
-1. `cp .env.example .env` en vul `TELEGRAM_BOT_TOKEN` + `TELEGRAM_CHAT_ID` in.
+1. `cp .env.example .env` en vul tenminste `TELEGRAM_BOT_TOKEN` +
+   `TELEGRAM_CHAT_ID` in.
    - Bot maken: chat met `@BotFather`, `/newbot`.
-   - Chat id vinden: stuur bericht naar `@userinfobot`.
-2. Optioneel: registreer bij [eBay Developer](https://developer.ebay.com/)
-   en zet `EBAY_APP_ID`.
+   - Chat-id: stuur bericht naar `@userinfobot`.
+2. Optioneel: `EBAY_APP_ID`, `BRICKLINK_*`, `REVERB_TOKEN` voor extra
+   waardebronnen.
 3. `docker compose up -d --build`.
-4. Bot reageert op `/start`.
+4. Open `http://NAS:8765` voor het dashboard.
+5. Bot reageert op `/start` in Telegram.
 
-Of lokaal zonder Docker:
+Lokaal zonder Docker:
 
 ```bash
 pip install -e .
+patchright install chromium    # voor stealth browser
 treasure-scanner
+```
+
+## Architectuur
+
+```
+┌──────────────────┐
+│ live_loop        │──┐
+│ batch_loop       │  │      ┌──────────┐    ┌─────────┐
+│ recheck_loop     │──┼─▶ Scanner ─▶ Evaluator ─▶ Telegram
+│ troostwijk_loop  │  │      │          │    │  bot    │
+└──────────────────┘  │      │          │    └─────────┘
+                      │      │          │         │
+   ┌──────────┐       │      │  Valuation         ▼
+   │ Sources: │───────┘      │  Sources    ┌─────────┐
+   │ Mkpl     │              │   (6)       │ SQLite  │
+   │ Troostw  │              └──────────┘  └─────────┘
+   └──────────┘                                  ▲
+                                                 │
+                                          ┌──────┴────┐
+                                          │ Dashboard │
+                                          │ (FastAPI) │
+                                          └───────────┘
 ```
 
 ## Watchers tunen
 
-`config/watchers.yaml` definieert de zoekopdrachten. Edit en herstart
-(of laat Docker auto-restart het oppakken). Patterns zijn Python regex.
+`config/watchers.yaml` definieert zoekopdrachten. Velden:
 
-Drempels die ertoe doen:
+- `query`, `category_id`, `min_price`, `max_price`
+- `require` / `require_any` / `blacklist` (regex)
+- `value_sources` — geordende lijst, eerste succesvolle telt
+- `min_score` (0–100) — alert-drempel
+- `priority` — `high`/`medium`/`low` (kleur in Telegram + dashboard)
 
-- `min_score` per watcher: minimum totaalscore om te alerten (0–100).
-- AI-server bonus: ≥32GB RAM = +5, ≥64GB = +15, GPU ≥12GB VRAM = +10,
-  ≥24GB VRAM = nog +5.
-- Waarde-bonus: tot +45 voor hoge marges.
+AI-server scoring:
+- ≥32GB RAM: +5 · ≥64GB: +15
+- GPU ≥12GB VRAM: +10 · ≥24GB: nog +5
+- Waarde-marge: tot +45 (margin × 50, gecapt op 45)
+- Prijsdrop: extra +10
 
-## Waardebronnen — uitbreiden
-
-Nieuwe bron toevoegen:
+## Eigen waardebron toevoegen
 
 1. Subclass `ValuationSource` in `src/treasure_scanner/valuation/`.
-2. Implementeer `_compute(listing) -> Valuation | None`.
+2. Implementeer `async def _compute(listing) -> Valuation | None`.
 3. Registreer in `main.py` onder `valuation_sources`.
 4. Refereer per watcher via `value_sources: [naam]`.
 
-Geplande bronnen: Tweakers Pricewatch, BrickLink, Reverb, Catawiki.
+## Stealth browser
 
-## Risico's
+`STEALTH_BROWSER_ENABLED=true` activeert patchright (een gepatchte
+Playwright fork zonder de meest gangbare `navigator.webdriver`-leaks).
+Roteert per sessie tussen Chrome/Firefox/Safari fingerprints met
+passende locale, viewport en timezone. Persistent profile in
+`data/browser_profile/` zodat cookies + cache blijven (looking like a
+returning visitor in plaats van fresh headless). Min 4s interval tussen
+nav's, met jitter en kleine muis/scroll-bewegingen.
 
-- Marktplaats blokkeert agressieve scrapers. Standaard tempo is
-  voorzichtig (≥1s tussen requests, jitter, retry-backoff). Roterende
-  proxy is bij blokkades de volgende stap.
-- Géén officiële API — bij site-changes kan de fetcher breken.
-- Houd dit op persoonlijk gebruik.
+In Docker is alles voorgeïnstalleerd (zie `Dockerfile`). Lokaal: na
+`pip install` ook `patchright install chromium` draaien.
+
+## Roadmap
+
+Klaar (huidige branch):
+
+- ✅ 4 nieuwe waardebronnen: Tweakers, BrickLink, Reverb, Catawiki
+- ✅ Troostwijk source
+- ✅ Price-drop recheck loop
+- ✅ Werkend dashboard (FastAPI + Jinja, dark theme)
+- ✅ Stealth browser
+
+**Volgende fase**: zie [`docs/PHASE2_PLAN.md`](docs/PHASE2_PLAN.md)
+voor uitbreiding naar NL/BE/DE marktplaatsen en veilingsites
+(2dehands, Kleinanzeigen, BVA, Vavato, OVM, etc.).
 
 ## Layout
 
 ```
 src/treasure_scanner/
-  main.py                    entrypoint
-  config.py                  YAML + env loader
-  models.py                  dataclasses
-  db.py                      SQLite layer
-  parser.py                  RAM/VRAM/GPU extractor
-  evaluator.py               scoring
-  scanner.py                 live + batch loops
-  sources/marktplaats.py     LRP API client
-  valuation/                 base + sources
-  telegram_bot.py            bot + alerts + commands
-config/watchers.yaml         watcher definitions
+  main.py                     entrypoint, wires everything
+  config.py                   YAML + env loader
+  models.py                   Listing, Valuation, Evaluation dataclasses
+  db.py                       SQLite layer
+  parser.py                   RAM/VRAM/GPU extractor
+  evaluator.py                scoring
+  scanner.py                  live / batch / recheck / troostwijk loops
+  telegram_bot.py             bot + alerts + commands
+  browser/                    stealth Playwright wrapper
+    stealth.py
+    fingerprints.py
+  dashboard/                  FastAPI web UI
+    app.py
+    templates/*.html
+    static/style.css
+  sources/                    listing sources
+    marktplaats.py
+    troostwijk.py
+  valuation/                  six value sources
+    base.py
+    marktplaats_median.py
+    ebay_sold.py
+    tweakers.py
+    bricklink.py
+    reverb.py
+    catawiki.py
+config/watchers.yaml          watcher definitions
+docs/PHASE2_PLAN.md           NL/BE/DE multi-site plan
 ```
+
+## Risico's
+
+- **ToS**: Marktplaats en de meeste veilingsites verbieden scraping
+  technisch. Defensieve rate-limits + persoonlijk gebruik. Geen
+  herdistributie.
+- **API-instabiliteit**: geen officiële API → bij site-changes kan een
+  source breken; check dashboard `/healthz` en logs.
+- **Stealth browser** maakt detectie moeilijker maar niet onmogelijk.
+  Bij ban op één IP: zet `STEALTH_BROWSER_HEADLESS=false` voor debug,
+  of voeg een proxy toe.

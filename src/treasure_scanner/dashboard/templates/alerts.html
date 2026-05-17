@@ -1,0 +1,27 @@
+{% extends "_base.html" %}
+{% block content %}
+<h2>Alerts</h2>
+{% if alerts %}
+<div class="alerts-grid">
+  {% for a in alerts %}
+  <article class="alert-card">
+    {% if a.thumbnail_url %}<img src="{{ a.thumbnail_url }}" alt="" class="alert-thumb">{% endif %}
+    <div class="alert-body">
+      <header>
+        <span class="score score-{{ 'high' if a.score >= 70 else ('mid' if a.score >= 50 else 'low') }}">{{ a.score }}</span>
+        <span class="alert-price">{% if a.price %}€{{ '%.0f'|format(a.price) }}{% else %}—{% endif %}</span>
+      </header>
+      <h3><a href="{{ a.url }}" target="_blank" rel="noopener">{{ a.title[:100] }}</a></h3>
+      <p class="meta">
+        <span>{{ a.watcher_name }}</span>
+        {% if a.location %} · <span>{{ a.location }}</span>{% endif %}
+        · <small>{{ a.sent_at[:16].replace('T', ' ') }}</small>
+      </p>
+    </div>
+  </article>
+  {% endfor %}
+</div>
+{% else %}
+<p>Nog geen alerts gegenereerd.</p>
+{% endif %}
+{% endblock %}

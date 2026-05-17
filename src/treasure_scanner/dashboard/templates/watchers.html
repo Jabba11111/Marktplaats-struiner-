@@ -1,0 +1,53 @@
+{% extends "_base.html" %}
+{% block content %}
+<h2>Watchers</h2>
+
+<h3>YAML watchers <small>(bewerken via <code>config/watchers.yaml</code>)</small></h3>
+<table>
+  <thead><tr><th>Naam</th><th>Query</th><th>Prijsgrens</th><th>Bronnen</th><th>Score</th><th>Prio</th></tr></thead>
+  <tbody>
+  {% for w in watchers %}
+    <tr>
+      <td>{{ w.name }}</td>
+      <td><code>{{ w.query }}</code></td>
+      <td>
+        {% if w.min_price %}€{{ '%.0f'|format(w.min_price) }}+{% endif %}
+        {% if w.max_price %}<br>≤€{{ '%.0f'|format(w.max_price) }}{% endif %}
+      </td>
+      <td>{{ w.value_sources|join(", ") }}</td>
+      <td>≥{{ w.min_score }}</td>
+      <td><span class="prio prio-{{ w.priority }}">{{ w.priority }}</span></td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+
+<h3>Ad-hoc watchers</h3>
+<form method="post" action="/watchers/adhoc" class="filter-bar">
+  <label>Zoekterm
+    <input type="text" name="query" placeholder="bijv. ThinkPad P1" required>
+  </label>
+  <button type="submit">Toevoegen</button>
+</form>
+
+{% if adhoc %}
+<table>
+  <thead><tr><th>Query</th><th>Toegevoegd</th><th></th></tr></thead>
+  <tbody>
+  {% for a in adhoc %}
+    <tr>
+      <td><code>{{ a.query }}</code></td>
+      <td><small>{{ a.created_at[:16].replace('T', ' ') }}</small></td>
+      <td>
+        <form method="post" action="/watchers/adhoc/{{ a.id }}/delete" style="display:inline">
+          <button type="submit" class="danger">Verwijder</button>
+        </form>
+      </td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p>Nog geen ad-hoc watchers.</p>
+{% endif %}
+{% endblock %}

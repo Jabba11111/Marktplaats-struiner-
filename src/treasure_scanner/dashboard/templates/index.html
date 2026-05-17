@@ -1,0 +1,45 @@
+{% extends "_base.html" %}
+{% block content %}
+<section class="stats-grid">
+  <div class="stat">
+    <span class="stat-label">Gescand (24u)</span>
+    <span class="stat-value">{{ stats_24h.scanned }}</span>
+  </div>
+  <div class="stat">
+    <span class="stat-label">Alerts (24u)</span>
+    <span class="stat-value">{{ stats_24h.alerted }}</span>
+  </div>
+  <div class="stat">
+    <span class="stat-label">Geëvalueerd (24u)</span>
+    <span class="stat-value">{{ stats_24h.evaluated }}</span>
+  </div>
+  <div class="stat">
+    <span class="stat-label">Alerts (7d)</span>
+    <span class="stat-value">{{ stats_7d.alerted }}</span>
+  </div>
+  <div class="stat">
+    <span class="stat-label">Watchers</span>
+    <span class="stat-value">{{ watcher_count }} <small>+{{ adhoc_count }} ad-hoc</small></span>
+  </div>
+</section>
+
+<h2>Recente alerts</h2>
+{% if alerts %}
+<table>
+  <thead><tr><th>Score</th><th>Prijs</th><th>Titel</th><th>Watcher</th><th>Wanneer</th></tr></thead>
+  <tbody>
+  {% for a in alerts %}
+    <tr>
+      <td><span class="score score-{{ 'high' if a.score >= 70 else ('mid' if a.score >= 50 else 'low') }}">{{ a.score }}</span></td>
+      <td>{% if a.price %}€{{ '%.0f'|format(a.price) }}{% else %}—{% endif %}</td>
+      <td><a href="{{ a.url }}" target="_blank" rel="noopener">{{ a.title[:80] }}</a></td>
+      <td>{{ a.watcher_name }}</td>
+      <td><small>{{ a.sent_at[:16].replace('T', ' ') }}</small></td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p>Nog geen alerts.</p>
+{% endif %}
+{% endblock %}

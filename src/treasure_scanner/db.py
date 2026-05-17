@@ -97,8 +97,13 @@ class Database:
 
     # --- listings ---
 
-    def upsert_listing(self, listing) -> bool:
-        """Returns True if this is a new listing."""
+    def upsert_listing(self, listing) -> tuple[bool, float | None]:
+        """Returns (is_new, previous_price_if_dropped).
+
+        previous_price_if_dropped is the prior price when the new price
+        is at least 5% lower; None otherwise. Callers use this to trigger
+        a re-alert on substantial price drops.
+        """
         with self.connect() as conn:
             row = conn.execute(
                 "SELECT item_id, last_price FROM listings WHERE item_id = ?",
@@ -121,12 +126,82 @@ class Database:
                         now, now, listing.price,
                     ),
                 )
-                return True
+                return True, None
+
+            prev_price = row["last_price"]
+            dropped_from: float | None = None
+            if (prev_price and listing.price
+                    and listing.price < prev_price * 0.95):
+                dropped_from = float(prev_price)
+
             conn.execute(
-                "UPDATE listings SET last_seen_at = ?, last_price = ? WHERE item_id = ?",
-                (now, listing.price, listing.item_id),
+                """UPDATE listings
+                   SET last_seen_at = ?, last_price = ?,
+                       title = ?, description = ?, price = ?, price_type = ?
+                   WHERE item_id = ?""",
+                (now, listing.price, listing.title, listing.description,
+                 listing.price, listing.price_type, listing.item_id),
             )
-            return False
+            return False, dropped_from
+
+    def listings_seen_within(self, hours: int, limit: int = 500) -> list[dict]:
+        """Recently-active listings, for the recheck job."""
+        from datetime import datetime, timezone, timedelta
+        cutoff = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
+        with self.connect() as conn:
+            rows = conn.execute(
+                """SELECT item_id, title, url, last_price, category_id
+                   FROM listings WHERE last_seen_at >= ? AND url IS NOT NULL
+                   ORDER BY last_seen_at DESC LIMIT ?""",
+                (cutoff, limit),
+            ).fetchall()
+            return [dict(r) for r in rows]
+
+    def recent_listings(self, limit: int = 100,
+                        min_score: int | None = None) -> list[dict]:
+        """For dashboard: listings with their best evaluation."""
+        with self.connect() as conn:
+            sql = """
+                SELECT l.item_id, l.title, l.description, l.price, l.price_type,
+                       l.url, l.location, l.thumbnail_url, l.first_seen_at,
+                       l.last_price,
+                       (SELECT MAX(score) FROM evaluations e WHERE e.item_id = l.item_id) AS best_score,
+                       (SELECT estimated_value FROM evaluations e
+                        WHERE e.item_id = l.item_id ORDER BY score DESC LIMIT 1) AS est_value,
+                       (SELECT watcher_name FROM evaluations e
+                        WHERE e.item_id = l.item_id ORDER BY score DESC LIMIT 1) AS watcher
+                FROM listings l
+                ORDER BY l.first_seen_at DESC
+                LIMIT ?
+            """
+            rows = conn.execute(sql, (limit,)).fetchall()
+            out = [dict(r) for r in rows]
+            if min_score is not None:
+                out = [r for r in out if (r["best_score"] or 0) >= min_score]
+            return out
+
+    def recent_alerts(self, limit: int = 50) -> list[dict]:
+        with self.connect() as conn:
+            rows = conn.execute(
+                """SELECT a.score, a.watcher_name, a.sent_at,
+                          l.title, l.url, l.price, l.thumbnail_url, l.location
+                   FROM alerts a JOIN listings l ON l.item_id = a.item_id
+                   ORDER BY a.id DESC LIMIT ?""", (limit,),
+            ).fetchall()
+            return [dict(r) for r in rows]
+
+    def remove_adhoc_watch(self, watch_id: int) -> int:
+        with self.connect() as conn:
+            cur = conn.execute(
+                "DELETE FROM ad_hoc_watches WHERE id = ?", (watch_id,),
+            )
+            return cur.rowcount
+
+    def list_adhoc_watches_full(self) -> list[dict]:
+        with self.connect() as conn:
+            return [dict(r) for r in conn.execute(
+                "SELECT id, query, created_at FROM ad_hoc_watches ORDER BY id"
+            )]
 
     def has_alerted(self, item_id: str, watcher_name: str) -> bool:
         with self.connect() as conn:

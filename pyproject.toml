@@ -13,7 +13,15 @@ dependencies = [
     "tenacity>=8.2",
     "rapidfuzz>=3.6",
     "structlog>=24.1",
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.27",
+    "jinja2>=3.1",
+    "python-multipart>=0.0.9",
+    "patchright>=1.45",
 ]
+
+[project.optional-dependencies]
+playwright = ["playwright>=1.45"]
 
 [project.scripts]
 treasure-scanner = "treasure_scanner.main:main"

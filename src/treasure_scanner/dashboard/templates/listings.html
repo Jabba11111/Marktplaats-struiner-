@@ -1,0 +1,46 @@
+{% extends "_base.html" %}
+{% block content %}
+<h2>Listings</h2>
+<form method="get" class="filter-bar">
+  <label>Min. score
+    <input type="number" name="min_score" value="{{ min_score }}" min="0" max="100">
+  </label>
+  <label>Aantal
+    <input type="number" name="limit" value="{{ limit }}" min="10" max="500">
+  </label>
+  <button type="submit">Filter</button>
+</form>
+
+{% if items %}
+<table>
+  <thead>
+    <tr><th></th><th>Score</th><th>Prijs</th><th>Waarde</th>
+        <th>Titel</th><th>Watcher</th><th>Locatie</th><th>Gezien</th></tr>
+  </thead>
+  <tbody>
+  {% for it in items %}
+    <tr>
+      <td>
+        {% if it.thumbnail_url %}
+          <img src="{{ it.thumbnail_url }}" alt="" class="thumb">
+        {% endif %}
+      </td>
+      <td>
+        {% if it.best_score %}
+          <span class="score score-{{ 'high' if it.best_score >= 70 else ('mid' if it.best_score >= 50 else 'low') }}">{{ it.best_score }}</span>
+        {% else %}—{% endif %}
+      </td>
+      <td>{% if it.price %}€{{ '%.0f'|format(it.price) }}{% else %}<em>{{ it.price_type }}</em>{% endif %}</td>
+      <td>{% if it.est_value %}~€{{ '%.0f'|format(it.est_value) }}{% else %}—{% endif %}</td>
+      <td><a href="{{ it.url }}" target="_blank" rel="noopener">{{ it.title[:90] }}</a></td>
+      <td>{{ it.watcher or '—' }}</td>
+      <td>{{ it.location or '' }}</td>
+      <td><small>{{ it.first_seen_at[:16].replace('T', ' ') }}</small></td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p>Geen listings gevonden voor deze filters.</p>
+{% endif %}
+{% endblock %}

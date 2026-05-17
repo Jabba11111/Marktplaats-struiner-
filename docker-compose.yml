@@ -7,5 +7,8 @@ services:
     volumes:
       - ./data:/app/data
       - ./config:/app/config
+    ports:
+      - "8765:8765"
     environment:
       - TZ=Europe/Amsterdam
+    shm_size: "1gb"   # Chromium needs >64MB /dev/shm
