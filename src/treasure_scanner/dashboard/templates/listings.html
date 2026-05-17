@@ -2,6 +2,22 @@
 {% block content %}
 <h2>Listings</h2>
 <form method="get" class="filter-bar">
+  <label>Site
+    <select name="site">
+      <option value="">— alle —</option>
+      {% for s in all_sites %}
+        <option value="{{ s }}" {% if s == site %}selected{% endif %}>{{ s }}</option>
+      {% endfor %}
+    </select>
+  </label>
+  <label>Land
+    <select name="country">
+      <option value="">— alle —</option>
+      <option value="NL" {% if country == 'NL' %}selected{% endif %}>NL</option>
+      <option value="BE" {% if country == 'BE' %}selected{% endif %}>BE</option>
+      <option value="DE" {% if country == 'DE' %}selected{% endif %}>DE</option>
+    </select>
+  </label>
   <label>Min. score
     <input type="number" name="min_score" value="{{ min_score }}" min="0" max="100">
   </label>
@@ -15,7 +31,7 @@
 <table>
   <thead>
     <tr><th></th><th>Score</th><th>Prijs</th><th>Waarde</th>
-        <th>Titel</th><th>Watcher</th><th>Locatie</th><th>Gezien</th></tr>
+        <th>Titel</th><th>Site</th><th>Watcher</th><th>Locatie</th><th>Gezien</th></tr>
   </thead>
   <tbody>
   {% for it in items %}
@@ -33,6 +49,7 @@
       <td>{% if it.price %}€{{ '%.0f'|format(it.price) }}{% else %}<em>{{ it.price_type }}</em>{% endif %}</td>
       <td>{% if it.est_value %}~€{{ '%.0f'|format(it.est_value) }}{% else %}—{% endif %}</td>
       <td><a href="{{ it.url }}" target="_blank" rel="noopener">{{ it.title[:90] }}</a></td>
+      <td><span class="site-tag">{{ it.site }}</span> <small>{{ it.country }}</small></td>
       <td>{{ it.watcher or '—' }}</td>
       <td>{{ it.location or '' }}</td>
       <td><small>{{ it.first_seen_at[:16].replace('T', ' ') }}</small></td>

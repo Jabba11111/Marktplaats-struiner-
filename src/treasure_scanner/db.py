@@ -21,7 +21,16 @@ CREATE TABLE IF NOT EXISTS listings (
     category_id    INTEGER,
     first_seen_at  TEXT NOT NULL,
     last_seen_at   TEXT NOT NULL,
-    last_price     REAL
+    last_price     REAL,
+    site           TEXT DEFAULT 'marktplaats',
+    country        TEXT DEFAULT 'NL'
+);
+CREATE INDEX IF NOT EXISTS idx_listings_site ON listings(site);
+
+CREATE TABLE IF NOT EXISTS dedup_fingerprints (
+    fingerprint    TEXT PRIMARY KEY,
+    first_item_id  TEXT NOT NULL,
+    first_seen_at  TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS evaluations (
@@ -84,6 +93,15 @@ class Database:
     def _init(self) -> None:
         with self.connect() as conn:
             conn.executescript(SCHEMA)
+            self._migrate(conn)
+
+    @staticmethod
+    def _migrate(conn) -> None:
+        cols = {r["name"] for r in conn.execute("PRAGMA table_info(listings)")}
+        if "site" not in cols:
+            conn.execute("ALTER TABLE listings ADD COLUMN site TEXT DEFAULT 'marktplaats'")
+        if "country" not in cols:
+            conn.execute("ALTER TABLE listings ADD COLUMN country TEXT DEFAULT 'NL'")
 
     @contextmanager
     def connect(self) -> Iterator[sqlite3.Connection]:
@@ -115,8 +133,9 @@ class Database:
                     """INSERT INTO listings
                        (item_id, title, description, price, price_type, url,
                         seller_name, location, posted_at, thumbnail_url,
-                        category_id, first_seen_at, last_seen_at, last_price)
-                       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                        category_id, first_seen_at, last_seen_at, last_price,
+                        site, country)
+                       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                     (
                         listing.item_id, listing.title, listing.description,
                         listing.price, listing.price_type, listing.url,
@@ -124,6 +143,8 @@ class Database:
                         listing.posted_at.isoformat() if listing.posted_at else None,
                         listing.thumbnail_url, listing.category_id,
                         now, now, listing.price,
+                        getattr(listing, "site", "marktplaats"),
+                        getattr(listing, "country", "NL"),
                     ),
                 )
                 return True, None
@@ -158,27 +179,43 @@ class Database:
             return [dict(r) for r in rows]
 
     def recent_listings(self, limit: int = 100,
-                        min_score: int | None = None) -> list[dict]:
+                        min_score: int | None = None,
+                        site: str | None = None,
+                        country: str | None = None) -> list[dict]:
         """For dashboard: listings with their best evaluation."""
         with self.connect() as conn:
             sql = """
                 SELECT l.item_id, l.title, l.description, l.price, l.price_type,
                        l.url, l.location, l.thumbnail_url, l.first_seen_at,
-                       l.last_price,
+                       l.last_price, l.site, l.country,
                        (SELECT MAX(score) FROM evaluations e WHERE e.item_id = l.item_id) AS best_score,
                        (SELECT estimated_value FROM evaluations e
                         WHERE e.item_id = l.item_id ORDER BY score DESC LIMIT 1) AS est_value,
                        (SELECT watcher_name FROM evaluations e
                         WHERE e.item_id = l.item_id ORDER BY score DESC LIMIT 1) AS watcher
                 FROM listings l
-                ORDER BY l.first_seen_at DESC
-                LIMIT ?
+                WHERE 1=1
             """
-            rows = conn.execute(sql, (limit,)).fetchall()
+            params: list = []
+            if site:
+                sql += " AND l.site = ?"
+                params.append(site)
+            if country:
+                sql += " AND l.country = ?"
+                params.append(country)
+            sql += " ORDER BY l.first_seen_at DESC LIMIT ?"
+            params.append(limit)
+            rows = conn.execute(sql, params).fetchall()
             out = [dict(r) for r in rows]
             if min_score is not None:
                 out = [r for r in out if (r["best_score"] or 0) >= min_score]
             return out
+
+    def distinct_sites(self) -> list[str]:
+        with self.connect() as conn:
+            return [r["site"] for r in conn.execute(
+                "SELECT DISTINCT site FROM listings ORDER BY site"
+            ) if r["site"]]
 
     def recent_alerts(self, limit: int = 50) -> list[dict]:
         with self.connect() as conn:
@@ -202,6 +239,31 @@ class Database:
             return [dict(r) for r in conn.execute(
                 "SELECT id, query, created_at FROM ad_hoc_watches ORDER BY id"
             )]
+
+    # --- cross-site dedup ---
+
+    def check_and_register_fingerprint(
+        self, fingerprint: str, item_id: str,
+    ) -> str | None:
+        """Atomic check-and-set.
+
+        Returns None if this is the first time we see this fingerprint
+        (caller should proceed to alert). Returns the prior item_id if
+        we've seen it before (caller should suppress the alert).
+        """
+        with self.connect() as conn:
+            row = conn.execute(
+                "SELECT first_item_id FROM dedup_fingerprints WHERE fingerprint = ?",
+                (fingerprint,),
+            ).fetchone()
+            if row:
+                return row["first_item_id"]
+            conn.execute(
+                """INSERT INTO dedup_fingerprints
+                   (fingerprint, first_item_id, first_seen_at) VALUES (?,?,?)""",
+                (fingerprint, item_id, now_iso()),
+            )
+            return None
 
     def has_alerted(self, item_id: str, watcher_name: str) -> bool:
         with self.connect() as conn:

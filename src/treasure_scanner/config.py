@@ -24,6 +24,12 @@ class Watcher:
     value_sources: list[str] = field(default_factory=lambda: ["marktplaats_median"])
     min_score: int = 50
     priority: str = "medium"
+    countries: list[str] = field(default_factory=lambda: ["NL"])
+    query_overrides: dict[str, str] = field(default_factory=dict)
+    sources: list[str] | None = None  # None = all sources matching countries
+
+    def query_for_country(self, country: str) -> str:
+        return self.query_overrides.get(country, self.query)
 
     @classmethod
     def from_dict(cls, d: dict) -> "Watcher":
@@ -40,6 +46,9 @@ class Watcher:
             value_sources=d.get("value_sources", ["marktplaats_median"]),
             min_score=d.get("min_score", 50),
             priority=d.get("priority", "medium"),
+            countries=d.get("countries", ["NL"]),
+            query_overrides=d.get("query_overrides", {}),
+            sources=d.get("sources"),
         )
 
 

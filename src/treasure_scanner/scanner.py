@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import random
+import re
+from typing import TYPE_CHECKING
 
 import structlog
 
@@ -9,30 +12,65 @@ from .config import Config, Watcher
 from .db import Database
 from .evaluator import evaluate, listing_passes_watcher, matches_keyword_sweep
 from .models import Listing
-from .sources.marktplaats import MarktplaatsClient
-from .sources.troostwijk import TroostwijkClient
-from .telegram_bot import TelegramNotifier
+from .sources.base import Source
 from .valuation.base import ValuationSource
+
+if TYPE_CHECKING:
+    from .telegram_bot import TelegramNotifier
 
 log = structlog.get_logger(__name__)
 
 
+def _fingerprint(listing: Listing) -> str:
+    """Cross-site dedup key: normalized title + rounded price.
+
+    Catches the same item posted on Marktplaats + 2dehands by the same
+    seller. Not perfect (no image hash yet) but good enough to suppress
+    obvious duplicates without missing real listings.
+    """
+    title = re.sub(r"[^a-z0-9 ]", " ", listing.title.lower())
+    title = re.sub(r"\s+", " ", title).strip()
+    # Round price to nearest €5 so small differences don't bust the hash.
+    price = "noprice"
+    if listing.price is not None:
+        price = str(round(listing.price / 5) * 5)
+    key = f"{title[:80]}|{price}"
+    return hashlib.sha256(key.encode()).hexdigest()[:16]
+
+
 class Scanner:
+    """Multi-source scanner.
+
+    sources: list of `Source` objects (one per host).
+    """
+
     def __init__(
         self,
         cfg: Config,
         db: Database,
-        client: MarktplaatsClient,
-        notifier: TelegramNotifier,
+        sources: list[Source],
+        notifier: "TelegramNotifier",
         valuation_sources: dict[str, ValuationSource],
-        troostwijk: TroostwijkClient | None = None,
+        priority_source: str = "marktplaats",
     ):
         self.cfg = cfg
         self.db = db
-        self.client = client
+        self.sources = sources
         self.notifier = notifier
         self.valuation_sources = valuation_sources
-        self.troostwijk = troostwijk
+        self.priority_source = priority_source
+
+    # --- helpers ---
+
+    def _sources_for_watcher(self, watcher: Watcher) -> list[Source]:
+        out = []
+        for s in self.sources:
+            if watcher.sources and s.name not in watcher.sources:
+                continue
+            if s.country not in watcher.countries:
+                continue
+            out.append(s)
+        return out
 
     async def _value_listing(self, listing: Listing, sources: list[str]):
         for name in sources:
@@ -58,7 +96,6 @@ class Scanner:
         if self.db.is_muted(f"{listing.title} {listing.description}"):
             return
 
-        # Already alerted? Skip unless price dropped substantially.
         already_alerted = self.db.has_alerted(listing.item_id, watcher.name)
         if already_alerted and dropped_from is None:
             return
@@ -70,43 +107,47 @@ class Scanner:
         valuation = await self._value_listing(listing, watcher.value_sources)
         ev = evaluate(listing, watcher, valuation)
 
-        if dropped_from is not None:
-            pct = (dropped_from - (listing.price or 0)) / dropped_from * 100
+        if dropped_from is not None and listing.price is not None:
+            pct = (dropped_from - listing.price) / dropped_from * 100
             ev.reasons.insert(
                 0, f"PRIJSDROP: €{dropped_from:.0f} → €{listing.price:.0f} (-{pct:.0f}%)"
             )
-            # Boost score so a drop becomes notable.
             ev.score = min(100, ev.score + 10)
 
         self.db.record_evaluation(ev)
 
-        if ev.score >= watcher.min_score:
-            log.info("alert", watcher=watcher.name, score=ev.score,
-                     title=listing.title[:60], price=listing.price,
-                     new=is_new, drop=dropped_from)
-            await self.notifier.send_alert(ev)
+        if ev.score < watcher.min_score:
+            return
 
-    async def scan_watcher(self, watcher: Watcher, max_pages: int = 2,
-                           source: str = "marktplaats") -> int:
+        # Cross-site dedup — only on initial alerts, never on price drops.
+        if dropped_from is None:
+            fp = _fingerprint(listing)
+            existing = self.db.check_and_register_fingerprint(fp, listing.item_id)
+            if existing and existing != listing.item_id:
+                log.info("dedup_suppressed", watcher=watcher.name,
+                         site=listing.site, title=listing.title[:60],
+                         prior=existing)
+                # Record an alert row so we don't keep checking this listing.
+                self.db.record_alert(listing.item_id, watcher.name,
+                                     ev.score, telegram_message_id=None)
+                return
+
+        log.info("alert", watcher=watcher.name, source=listing.site,
+                 score=ev.score, title=listing.title[:60],
+                 price=listing.price, new=is_new, drop=dropped_from)
+        await self.notifier.send_alert(ev)
+
+    async def scan_watcher_on_source(
+        self, watcher: Watcher, source: Source, max_pages: int = 2,
+    ) -> int:
         count = 0
         consecutive_seen = 0
+        query = watcher.query_for_country(source.country)
         try:
-            if source == "marktplaats":
-                iterator = self.client.search_newest(
-                    query=watcher.query,
-                    category_id=watcher.category_id,
-                    max_pages=max_pages,
-                )
-            elif source == "troostwijk":
-                if self.troostwijk is None:
-                    return 0
-                iterator = self.troostwijk.search(
-                    query=watcher.query, max_pages=max_pages,
-                )
-            else:
-                return 0
-
-            async for listing in iterator:
+            async for listing in source.search(
+                query=query, category_id=watcher.category_id,
+                max_pages=max_pages,
+            ):
                 is_new, dropped_from = self.db.upsert_listing(listing)
                 if not is_new and dropped_from is None:
                     consecutive_seen += 1
@@ -119,20 +160,32 @@ class Scanner:
                 )
                 count += 1
         except Exception as e:
-            log.error("scan_watcher_failed", watcher=watcher.name,
-                      source=source, error=str(e))
+            log.error("scan_failed", watcher=watcher.name,
+                      source=source.name, error=str(e))
         return count
+
+    async def scan_watcher(self, watcher: Watcher, max_pages: int = 2) -> int:
+        total = 0
+        for src in self._sources_for_watcher(watcher):
+            total += await self.scan_watcher_on_source(
+                watcher, src, max_pages=max_pages,
+            )
+        return total
 
     async def keyword_sweep_pass(self) -> None:
         sweep = self.cfg.keyword_sweep
         if not sweep.enabled:
             return
+        # Sweep only on the primary Marktplaats source — cheaper and
+        # avoids duplicate German "nalatenschap" hits on Kleinanzeigen.
+        primary = next((s for s in self.sources
+                        if s.name == self.priority_source), None)
+        if primary is None:
+            return
         queries = ["nalatenschap", "zolderopruiming", "geërfd", "moet weg"]
         for q in queries:
             try:
-                async for listing in self.client.search_newest(
-                    query=q, category_id=None, max_pages=1,
-                ):
+                async for listing in primary.search(query=q, max_pages=1):
                     is_new, dropped_from = self.db.upsert_listing(listing)
                     if not is_new and dropped_from is None:
                         continue
@@ -143,10 +196,10 @@ class Scanner:
                         continue
                     fake_watcher = Watcher(
                         name=f"Sweep: {', '.join(hits[:2])}",
-                        query=q,
-                        min_score=sweep.min_score,
+                        query=q, min_score=sweep.min_score,
                         priority=sweep.priority,
                         value_sources=["marktplaats_median"],
+                        countries=["NL"],
                     )
                     if self.db.has_alerted(listing.item_id, fake_watcher.name) \
                             and dropped_from is None:
@@ -163,14 +216,33 @@ class Scanner:
             except Exception as e:
                 log.warning("sweep_query_failed", q=q, error=str(e))
 
+    # --- loops ---
+
+    @property
+    def _live_sources(self) -> list[Source]:
+        """Marketplace sources (not auction-only). Polled in live_loop."""
+        auction_only = {"troostwijk", "vavato", "catawiki", "bva", "ovm"}
+        return [s for s in self.sources if s.name not in auction_only]
+
+    @property
+    def _auction_sources(self) -> list[Source]:
+        auction = {"troostwijk", "vavato", "catawiki", "bva", "ovm"}
+        return [s for s in self.sources if s.name in auction]
+
     async def live_loop(self) -> None:
         while True:
             for watcher in self.cfg.watchers:
-                await self.scan_watcher(watcher, max_pages=2,
-                                        source="marktplaats")
+                for src in self._sources_for_watcher(watcher):
+                    if src in self._live_sources:
+                        await self.scan_watcher_on_source(
+                            watcher, src, max_pages=2,
+                        )
             for q in self.db.list_adhoc_watches():
-                w = Watcher(name=f"ad-hoc: {q}", query=q, min_score=40)
-                await self.scan_watcher(w, max_pages=1, source="marktplaats")
+                w = Watcher(name=f"ad-hoc: {q}", query=q, min_score=40,
+                            countries=["NL", "BE", "DE"])
+                for src in self._sources_for_watcher(w):
+                    if src in self._live_sources:
+                        await self.scan_watcher_on_source(w, src, max_pages=1)
             await self.keyword_sweep_pass()
 
             delay = random.randint(self.cfg.live_poll_min, self.cfg.live_poll_max)
@@ -182,45 +254,46 @@ class Scanner:
         while True:
             for watcher in self.cfg.watchers:
                 log.info("batch_scan", watcher=watcher.name)
-                await self.scan_watcher(watcher, max_pages=10,
-                                        source="marktplaats")
-                await asyncio.sleep(30)
+                for src in self._sources_for_watcher(watcher):
+                    if src in self._live_sources:
+                        await self.scan_watcher_on_source(
+                            watcher, src, max_pages=10,
+                        )
+                        await asyncio.sleep(20)
             await asyncio.sleep(24 * 3600)
 
-    async def troostwijk_loop(self) -> None:
-        """Lower-priority auction scan. Hourly because auctions move slower."""
-        if self.troostwijk is None:
+    async def auction_loop(self) -> None:
+        if not self._auction_sources:
             return
         await asyncio.sleep(120)
         while True:
             for watcher in self.cfg.watchers:
-                # Auction-relevant watchers only: hardware/audio/antiek.
-                if "antiek" in watcher.name.lower() \
-                        or "marantz" in watcher.name.lower() \
-                        or "workstation" in watcher.name.lower() \
-                        or "rtx" in watcher.name.lower() \
-                        or "tesla" in watcher.name.lower() \
-                        or "mcintosh" in watcher.name.lower():
-                    log.info("troostwijk_scan", watcher=watcher.name)
-                    await self.scan_watcher(watcher, max_pages=2,
-                                            source="troostwijk")
-                    await asyncio.sleep(15)
-            await asyncio.sleep(3600)  # hourly
+                relevant_auction_keywords = [
+                    "antiek", "marantz", "workstation", "rtx", "tesla",
+                    "mcintosh", "zilver", "meissen", "technics",
+                ]
+                if not any(k in watcher.name.lower()
+                           for k in relevant_auction_keywords):
+                    continue
+                for src in self._auction_sources:
+                    log.info("auction_scan", watcher=watcher.name,
+                             source=src.name)
+                    await self.scan_watcher_on_source(
+                        watcher, src, max_pages=2,
+                    )
+                    await asyncio.sleep(10)
+            await asyncio.sleep(3600)
 
     async def recheck_loop(self) -> None:
-        """Periodic re-scan of recently-active queries to catch price drops.
-
-        Cheap: we re-run the watcher's search query, which naturally
-        re-encounters the listings; `upsert_listing` returns a non-None
-        `dropped_from` when the new price is at least 5% lower, which
-        triggers re-evaluation in `_process_listing`.
-        """
         await asyncio.sleep(self.cfg.recheck_interval_hours * 60)
         interval_s = self.cfg.recheck_interval_hours * 3600
         while True:
             log.info("recheck_pass_start")
             for watcher in self.cfg.watchers:
-                await self.scan_watcher(watcher, max_pages=3,
-                                        source="marktplaats")
+                for src in self._sources_for_watcher(watcher):
+                    if src in self._live_sources:
+                        await self.scan_watcher_on_source(
+                            watcher, src, max_pages=3,
+                        )
             log.info("recheck_pass_done")
             await asyncio.sleep(interval_s)

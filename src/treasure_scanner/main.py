@@ -4,7 +4,6 @@ import asyncio
 import logging
 import signal
 import sys
-from pathlib import Path
 
 import structlog
 
@@ -13,8 +12,12 @@ from .config import load_config
 from .dashboard import run_dashboard
 from .db import Database
 from .scanner import Scanner
-from .sources.marktplaats import MarktplaatsClient
-from .sources.troostwijk import TroostwijkClient
+from .sources import (
+    BVASource, CatawikiSource, KleinanzeigenSource, OVMSource,
+    TroostwijkClient, TweakersVASource, VavatoSource,
+    make_2dehands, make_2ememain, make_marktplaats,
+)
+from .sources.base import Source
 from .telegram_bot import TelegramNotifier
 from .valuation.bricklink import BrickLinkValuation
 from .valuation.catawiki import CatawikiValuation
@@ -47,18 +50,11 @@ async def run() -> None:
     setup_logging(cfg.log_level)
     log = structlog.get_logger(__name__)
 
-    log.info(
-        "starting",
-        watchers=len(cfg.watchers),
-        sweep_enabled=cfg.keyword_sweep.enabled,
-        telegram_configured=bool(cfg.telegram_token),
-        dashboard_enabled=cfg.dashboard_enabled,
-        stealth_browser_enabled=cfg.stealth_browser_enabled,
-    )
+    log.info("starting", watchers=len(cfg.watchers),
+             dashboard_enabled=cfg.dashboard_enabled,
+             stealth_browser_enabled=cfg.stealth_browser_enabled)
 
     db = Database(cfg.db_path)
-    client = MarktplaatsClient(request_interval=1.0)
-    troostwijk = TroostwijkClient()
     notifier = TelegramNotifier(cfg, db)
 
     browser: StealthBrowser | None = None
@@ -73,8 +69,24 @@ async def run() -> None:
             log.error("stealth_browser_start_failed", error=str(e))
             browser = None
 
+    # Build source registry. Lighter sites first, heavier later.
+    marktplaats = make_marktplaats()
+    sources: list[Source] = [
+        marktplaats,
+        make_2dehands(),
+        make_2ememain(),
+        KleinanzeigenSource(browser=browser, use_browser=False),
+        TweakersVASource(),
+        TroostwijkClient(),
+        VavatoSource(),
+        BVASource(browser=browser, use_browser=False),
+        OVMSource(),
+    ]
+    if browser is not None:
+        sources.append(CatawikiSource(browser=browser))
+
     valuation_sources = {
-        "marktplaats_median": MarktplaatsMedianValuation(db, client),
+        "marktplaats_median": MarktplaatsMedianValuation(db, marktplaats),
         "ebay_sold": EbaySoldValuation(db, cfg.ebay_app_id),
         "tweakers": TweakersValuation(db),
         "bricklink": BrickLinkValuation(
@@ -84,7 +96,7 @@ async def run() -> None:
         "reverb": ReverbValuation(db, cfg.reverb_token),
         "catawiki": CatawikiValuation(db, browser),
     }
-    scanner = Scanner(cfg, db, client, notifier, valuation_sources, troostwijk)
+    scanner = Scanner(cfg, db, sources, notifier, valuation_sources)
 
     await notifier.start()
 
@@ -100,10 +112,14 @@ async def run() -> None:
         asyncio.create_task(scanner.live_loop(), name="live"),
         asyncio.create_task(scanner.batch_loop(), name="batch"),
         asyncio.create_task(scanner.recheck_loop(), name="recheck"),
-        asyncio.create_task(scanner.troostwijk_loop(), name="troostwijk"),
+        asyncio.create_task(scanner.auction_loop(), name="auction"),
     ]
     if cfg.dashboard_enabled:
         tasks.append(asyncio.create_task(run_dashboard(cfg, db), name="dashboard"))
+
+    log.info("sources_registered",
+             names=[s.name for s in sources],
+             countries=sorted({s.country for s in sources}))
 
     await stop.wait()
     log.info("shutting_down")
@@ -112,8 +128,11 @@ async def run() -> None:
         t.cancel()
     await asyncio.gather(*tasks, return_exceptions=True)
     await notifier.stop()
-    await client.aclose()
-    await troostwijk.aclose()
+    for src in sources:
+        try:
+            await src.aclose()
+        except Exception:
+            pass
     if browser is not None:
         await browser.stop()
 

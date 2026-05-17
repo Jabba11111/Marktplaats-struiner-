@@ -6,7 +6,12 @@ from datetime import datetime
 
 @dataclass
 class Listing:
-    """Normalized Marktplaats listing."""
+    """Normalized listing from any source.
+
+    item_id MUST be globally unique across sources. New sources prefix
+    their raw id with a short site code (e.g. "2dh:<id>", "kln:<id>",
+    "tba:<id>"). Marktplaats keeps bare ids for backwards-compat.
+    """
     item_id: str
     title: str
     description: str
@@ -19,6 +24,8 @@ class Listing:
     thumbnail_url: str | None
     category_id: int | None
     category_name: str | None
+    site: str = "marktplaats"   # source identifier
+    country: str = "NL"
     raw: dict = field(default_factory=dict)
 
 

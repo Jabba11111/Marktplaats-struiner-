@@ -1,39 +1,38 @@
-# Marktplaats watchers. Reloaded automatically when this file changes.
+# Marktplaats / 2dehands / 2ememain / Kleinanzeigen / Tweakers V&A
+# / Troostwijk / Vavato / BVA / OVM / Catawiki watchers.
 #
-# Each watcher has:
-#   name:          short identifier (used in Telegram)
-#   query:         search keywords (Marktplaats q= parameter)
-#   category_id:   optional Marktplaats category id to narrow search
-#   min_price:     optional, skip listings below
-#   max_price:     optional, skip listings above
-#   require:       list of regex patterns (case-insensitive) that MUST match
-#                  title+description for the listing to pass
-#   require_any:   list of regex patterns where at least one must match
-#   blacklist:     regex patterns that disqualify the listing
-#   value_sources: which valuation sources to consult (in order)
-#   min_score:     0-100, alert threshold
-#   priority:      higher = louder Telegram alert
-#
-# AI/ML server hunt — your main target.
+# Each watcher fields:
+#   name, query                         required
+#   countries     [NL,BE,DE]            default [NL]; runs on every source in those countries
+#   sources       [marktplaats,...]     optional; restrict to specific sources
+#   query_overrides                     per-country query (e.g. DE: "antikes silber")
+#   category_id, min_price, max_price
+#   require, require_any, blacklist     regex
+#   value_sources                       ordered list of valuation sources
+#   min_score, priority
 
 watchers:
   - name: "AI Workstation/Server (RAM+GPU)"
     query: "workstation"
+    countries: [NL, BE, DE]
+    query_overrides:
+      DE: "workstation server"
     require_any:
       - "(?i)\\b(32|48|64|96|128|192|256)\\s?gb"
     require:
       - "(?i)(rtx\\s?30(70|80|90)|rtx\\s?40(70|80|90)|a4000|a5000|a6000|tesla|quadro|p40|p100|v100|mi(25|50|60|100|200|210|250|300))"
     blacklist:
-      - "(?i)(kapot|defect|onderdelen|broken|for parts|gestolen)"
+      - "(?i)(kapot|defect|onderdelen|broken|for parts|gestolen|defekt|kaputt)"
     max_price: 3500
-    value_sources: [marktplaats_median, ebay_sold]
+    value_sources: [tweakers, marktplaats_median, ebay_sold]
     min_score: 55
     priority: high
 
   - name: "RTX 3090 / 4090 los"
     query: "RTX 3090"
+    countries: [NL, BE, DE]
     blacklist:
-      - "(?i)(kapot|defect|onderdelen|geen beeld|niet werkend)"
+      - "(?i)(kapot|defect|onderdelen|geen beeld|niet werkend|defekt|kaputt)"
     max_price: 1200
     value_sources: [tweakers, marktplaats_median, ebay_sold]
     min_score: 50
@@ -41,8 +40,9 @@ watchers:
 
   - name: "RTX 4090 los"
     query: "RTX 4090"
+    countries: [NL, BE, DE]
     blacklist:
-      - "(?i)(kapot|defect|onderdelen|geen beeld|niet werkend)"
+      - "(?i)(kapot|defect|onderdelen|geen beeld|niet werkend|defekt|kaputt)"
     max_price: 2200
     value_sources: [tweakers, marktplaats_median, ebay_sold]
     min_score: 45
@@ -50,6 +50,7 @@ watchers:
 
   - name: "Tesla/Quadro datacenter GPU"
     query: "Tesla GPU"
+    countries: [NL, BE, DE]
     require_any:
       - "(?i)(tesla|quadro)\\s?(p40|p100|v100|a100|a40|a30|a10)"
     max_price: 2500
@@ -59,6 +60,7 @@ watchers:
 
   - name: "Dell/HP/Lenovo workstation"
     query: "Dell Precision"
+    countries: [NL, BE, DE]
     require_any:
       - "(?i)(precision|z440|z640|z840|thinkstation\\s?p(3|5|7|9)\\d{2})"
     require:
@@ -68,14 +70,17 @@ watchers:
     min_score: 50
     priority: medium
 
-# Antiek & Kunst
+# Antiek & Kunst — Catawiki/BVA/OVM zinvol, NL+DE markt
   - name: "Antiek zilver"
     query: "zilver antiek"
+    countries: [NL, BE, DE]
+    query_overrides:
+      DE: "antikes silber"
     category_id: 1
     require_any:
-      - "(?i)(\\.925|sterling|gehalte|hallmark|meesterteken)"
+      - "(?i)(\\.925|sterling|gehalte|hallmark|meesterteken|silberstempel)"
     blacklist:
-      - "(?i)(verzilverd|silver plated|plated)"
+      - "(?i)(verzilverd|silver plated|plated|versilbert)"
     max_price: 500
     value_sources: [catawiki, marktplaats_median]
     min_score: 45
@@ -83,6 +88,7 @@ watchers:
 
   - name: "Meissen / Royal Copenhagen"
     query: "Meissen"
+    countries: [NL, BE, DE]
     require_any:
       - "(?i)(meissen|royal copenhagen|kpm|nymphenburg)"
     max_price: 400
@@ -92,10 +98,11 @@ watchers:
 
   - name: "LEGO retired sets"
     query: "LEGO"
+    countries: [NL, BE, DE]
     require_any:
-      - "\\b(10\\d{3}|7\\d{4}|4\\d{4})(?:-1)?\\b"   # set numbers
+      - "\\b(10\\d{3}|7\\d{4}|4\\d{4})(?:-1)?\\b"
     blacklist:
-      - "(?i)(losse|gemixt|kg)"
+      - "(?i)(losse|gemixt|kg|lose|gemischt)"
     min_price: 30
     max_price: 600
     value_sources: [bricklink, marktplaats_median]
@@ -105,10 +112,11 @@ watchers:
 # Audio & Hifi
   - name: "Marantz vintage"
     query: "Marantz receiver"
+    countries: [NL, BE, DE]
     require_any:
       - "(?i)marantz\\s?\\d{4}"
     blacklist:
-      - "(?i)(defect|kapot|geen geluid|onderdelen)"
+      - "(?i)(defect|kapot|geen geluid|onderdelen|defekt)"
     max_price: 800
     value_sources: [reverb, marktplaats_median, ebay_sold]
     min_score: 50
@@ -116,6 +124,7 @@ watchers:
 
   - name: "McIntosh / Quad"
     query: "McIntosh"
+    countries: [NL, BE, DE]
     require_any:
       - "(?i)(mcintosh|quad esl|quad 33|quad 34|quad 405|quad 606)"
     max_price: 2500
@@ -125,15 +134,14 @@ watchers:
 
   - name: "Technics SL-1200"
     query: "Technics SL-1200"
+    countries: [NL, BE, DE]
     blacklist:
-      - "(?i)(defect|kapot|onderdelen)"
+      - "(?i)(defect|kapot|onderdelen|defekt)"
     max_price: 700
     value_sources: [reverb, marktplaats_median, ebay_sold]
     min_score: 45
     priority: medium
 
-# Keyword sweep — listings die "nalatenschap" achtige signalen bevatten,
-# ongeacht categorie. Lagere drempel, lager prioriteit.
 keyword_sweep:
   enabled: true
   patterns:

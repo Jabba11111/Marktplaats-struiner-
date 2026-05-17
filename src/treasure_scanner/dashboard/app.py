@@ -36,12 +36,26 @@ def build_app(cfg: Config, db: Database) -> FastAPI:
         )
 
     @app.get("/listings", response_class=HTMLResponse)
-    async def listings(request: Request, min_score: int = 0, limit: int = 100):
-        items = db.recent_listings(limit=limit,
-                                   min_score=min_score if min_score else None)
+    async def listings(
+        request: Request,
+        min_score: int = 0,
+        limit: int = 100,
+        site: str = "",
+        country: str = "",
+    ):
+        items = db.recent_listings(
+            limit=limit,
+            min_score=min_score if min_score else None,
+            site=site or None,
+            country=country or None,
+        )
         return TEMPLATES.TemplateResponse(
             request, "listings.html",
-            {"items": items, "min_score": min_score, "limit": limit},
+            {
+                "items": items, "min_score": min_score, "limit": limit,
+                "site": site, "country": country,
+                "all_sites": db.distinct_sites(),
+            },
         )
 
     @app.get("/alerts", response_class=HTMLResponse)

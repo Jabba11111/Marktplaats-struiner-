@@ -1,3 +1,8 @@
+"""Adevinta-family marketplaces: Marktplaats.nl, 2dehands.be, 2ememain.be.
+
+All three share the same backend ("LRP" search API), only the public
+host and locale differ. One class, three configured instances.
+"""
 from __future__ import annotations
 
 import asyncio
@@ -13,16 +18,13 @@ from ..models import Listing
 
 log = structlog.get_logger(__name__)
 
-# Public LRP search endpoint used by the Marktplaats website itself.
-SEARCH_URL = "https://www.marktplaats.nl/lrp/api/search"
-
 USER_AGENTS = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-    "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 "
-    "(KHTML, like Gecko) Version/17.2 Safari/605.1.15",
+    "(KHTML, like Gecko) Version/17.4 Safari/605.1.15",
     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
-    "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
 ]
 
 
@@ -36,15 +38,10 @@ def _parse_price(price_info: dict | None) -> tuple[float | None, str]:
     cents = price_info.get("priceCents")
     ptype = (price_info.get("priceType") or "").lower()
     mapping = {
-        "fixed": "fixed",
-        "bidding": "bidding",
-        "free": "free",
-        "see_description": "see_description",
-        "reserved": "reserved",
-        "exchange": "exchange",
-        "min_bid": "bidding",
-        "notk": "see_description",
-        "on_demand": "see_description",
+        "fixed": "fixed", "bidding": "bidding", "free": "free",
+        "see_description": "see_description", "reserved": "reserved",
+        "exchange": "exchange", "min_bid": "bidding",
+        "notk": "see_description", "on_demand": "see_description",
     }
     kind = mapping.get(ptype, ptype or "unknown")
     if kind == "free":
@@ -54,53 +51,33 @@ def _parse_price(price_info: dict | None) -> tuple[float | None, str]:
     return None, kind
 
 
-def _parse_listing(item: dict) -> Listing | None:
-    item_id = item.get("itemId") or item.get("id")
-    if not item_id:
-        return None
-    price, ptype = _parse_price(item.get("priceInfo"))
+class AdevintaMarketplace:
+    """Configurable Adevinta marketplace source (Marktplaats / 2dehands / 2ememain)."""
 
-    url_path = item.get("vipUrl") or ""
-    url = f"https://www.marktplaats.nl{url_path}" if url_path.startswith("/") else url_path
+    requires_browser = False
 
-    posted_raw = item.get("date")
-    try:
-        posted_at = datetime.fromisoformat(posted_raw.replace("Z", "+00:00")) \
-            if posted_raw else datetime.now(timezone.utc)
-    except (ValueError, AttributeError):
-        posted_at = datetime.now(timezone.utc)
+    def __init__(
+        self,
+        name: str,
+        host: str,
+        site_code: str,
+        country: str,
+        accept_language: str,
+        request_interval: float = 1.0,
+    ):
+        self.name = name
+        self.host = host
+        self.site_code = site_code
+        self.country = country
+        self.accept_language = accept_language
+        self.search_url = f"https://{host}/lrp/api/search"
 
-    seller = (item.get("sellerInformation") or {}).get("sellerName")
-    location = (item.get("location") or {}).get("cityName")
-
-    images = item.get("imageUrls") or []
-    thumb = images[0] if images else None
-    if thumb and thumb.startswith("//"):
-        thumb = "https:" + thumb
-
-    return Listing(
-        item_id=str(item_id),
-        title=item.get("title", ""),
-        description=item.get("description", "") or "",
-        price=price,
-        price_type=ptype,
-        url=url,
-        seller_name=seller,
-        location=location,
-        posted_at=posted_at,
-        thumbnail_url=thumb,
-        category_id=(item.get("categoryId")
-                     or (item.get("categorySpecificObject") or {}).get("id")),
-        category_name=item.get("categoryName"),
-        raw=item,
-    )
-
-
-class MarktplaatsClient:
-    def __init__(self, request_interval: float = 1.0):
         self._client = httpx.AsyncClient(
             timeout=20.0,
-            headers={"Accept": "application/json", "Accept-Language": "nl-NL,nl"},
+            headers={
+                "Accept": "application/json",
+                "Accept-Language": accept_language,
+            },
             follow_redirects=True,
         )
         self._last_request_at = 0.0
@@ -127,22 +104,69 @@ class MarktplaatsClient:
     )
     async def _get(self, params: dict) -> dict:
         await self._throttle()
-        headers = {"User-Agent": _ua()}
-        resp = await self._client.get(SEARCH_URL, params=params, headers=headers)
+        resp = await self._client.get(
+            self.search_url, params=params, headers={"User-Agent": _ua()},
+        )
         if resp.status_code in (429, 403):
-            log.warning("marktplaats_throttled", status=resp.status_code)
+            log.warning("adevinta_throttled", site=self.name, status=resp.status_code)
             resp.raise_for_status()
         resp.raise_for_status()
         return resp.json()
 
-    async def search_newest(
+    def _parse_listing(self, item: dict) -> Listing | None:
+        item_id = item.get("itemId") or item.get("id")
+        if not item_id:
+            return None
+        price, ptype = _parse_price(item.get("priceInfo"))
+
+        url_path = item.get("vipUrl") or ""
+        url = f"https://{self.host}{url_path}" if url_path.startswith("/") else url_path
+
+        posted_raw = item.get("date")
+        try:
+            posted_at = datetime.fromisoformat(posted_raw.replace("Z", "+00:00")) \
+                if posted_raw else datetime.now(timezone.utc)
+        except (ValueError, AttributeError):
+            posted_at = datetime.now(timezone.utc)
+
+        seller = (item.get("sellerInformation") or {}).get("sellerName")
+        location = (item.get("location") or {}).get("cityName")
+
+        images = item.get("imageUrls") or []
+        thumb = images[0] if images else None
+        if thumb and thumb.startswith("//"):
+            thumb = "https:" + thumb
+
+        # Prefix item_id with site_code so it's globally unique across sources.
+        prefixed_id = (f"{self.site_code}:{item_id}"
+                       if self.site_code != "mkpl" else str(item_id))
+
+        return Listing(
+            item_id=prefixed_id,
+            title=item.get("title", ""),
+            description=item.get("description", "") or "",
+            price=price,
+            price_type=ptype,
+            url=url,
+            seller_name=seller,
+            location=location,
+            posted_at=posted_at,
+            thumbnail_url=thumb,
+            category_id=(item.get("categoryId")
+                         or (item.get("categorySpecificObject") or {}).get("id")),
+            category_name=item.get("categoryName"),
+            site=self.name,
+            country=self.country,
+            raw=item,
+        )
+
+    async def search(
         self,
         query: str,
-        category_id: int | None = None,
         max_pages: int = 2,
+        category_id: int | None = None,
         page_size: int = 30,
     ) -> AsyncIterator[Listing]:
-        """Yield listings newest-first."""
         for page in range(max_pages):
             params = {
                 "query": query,
@@ -158,7 +182,8 @@ class MarktplaatsClient:
             try:
                 data = await self._get(params)
             except Exception as e:
-                log.error("marktplaats_search_failed", query=query, error=str(e))
+                log.error("adevinta_search_failed", site=self.name,
+                          query=query, error=str(e))
                 return
 
             items = data.get("listings") or data.get("items") or []
@@ -166,10 +191,47 @@ class MarktplaatsClient:
                 return
 
             for raw in items:
-                # Skip sponsored / dealer "topadvertentie" if priorityProduct flag set;
-                # those are duplicates and not "newest".
                 if raw.get("priorityProduct") in ("DAGTOPPER", "ADMARKT"):
                     continue
-                listing = _parse_listing(raw)
+                listing = self._parse_listing(raw)
                 if listing is not None:
                     yield listing
+
+    # backwards-compat alias used by valuation/marktplaats_median.py
+    search_newest = search
+
+
+# Convenience factories — keep call sites simple in main.py.
+
+def make_marktplaats(request_interval: float = 1.0) -> AdevintaMarketplace:
+    return AdevintaMarketplace(
+        name="marktplaats", host="www.marktplaats.nl", site_code="mkpl",
+        country="NL", accept_language="nl-NL,nl;q=0.9",
+        request_interval=request_interval,
+    )
+
+
+def make_2dehands(request_interval: float = 1.5) -> AdevintaMarketplace:
+    return AdevintaMarketplace(
+        name="2dehands", host="www.2dehands.be", site_code="2dh",
+        country="BE", accept_language="nl-BE,nl;q=0.9,fr-BE;q=0.7",
+        request_interval=request_interval,
+    )
+
+
+def make_2ememain(request_interval: float = 1.5) -> AdevintaMarketplace:
+    return AdevintaMarketplace(
+        name="2ememain", host="www.2ememain.be", site_code="2em",
+        country="BE", accept_language="fr-BE,fr;q=0.9,nl-BE;q=0.7",
+        request_interval=request_interval,
+    )
+
+
+# Back-compat alias so existing imports (and tests) still work.
+class MarktplaatsClient(AdevintaMarketplace):
+    def __init__(self, request_interval: float = 1.0):
+        super().__init__(
+            name="marktplaats", host="www.marktplaats.nl", site_code="mkpl",
+            country="NL", accept_language="nl-NL,nl;q=0.9",
+            request_interval=request_interval,
+        )

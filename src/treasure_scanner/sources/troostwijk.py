@@ -1,12 +1,6 @@
-"""Troostwijk Auctions (TBAuctions) source.
+"""TBAuctions family — Troostwijk (NL) and Vavato (BE).
 
-Auction site, so each lot has an `ends_at` deadline. Lots get a slight
-score bonus when ending soon (<24h) because that's the highest-signal
-window for low bids.
-
-JSON API discovered from the public search page; if it changes, fall
-back to stealth-browser HTML scraping. Search is on:
-https://www.tbauctions.com/api/search-api/lots
+Same backend API, different `site` parameter.
 """
 from __future__ import annotations
 
@@ -24,13 +18,28 @@ log = structlog.get_logger(__name__)
 API_URL = "https://www.tbauctions.com/api/search-api/lots"
 
 
-class TroostwijkClient:
-    def __init__(self, request_interval: float = 2.0):
+class TBAuctionsBase:
+    requires_browser = False
+
+    def __init__(
+        self,
+        name: str,
+        site_code: str,
+        country: str,
+        tba_site: str,
+        accept_language: str,
+        request_interval: float = 2.0,
+    ):
+        self.name = name
+        self.site_code = site_code
+        self.country = country
+        self.tba_site = tba_site
+        self.request_interval = request_interval
         self._client = httpx.AsyncClient(
             timeout=20.0,
             headers={
                 "Accept": "application/json",
-                "Accept-Language": "nl-NL,nl",
+                "Accept-Language": accept_language,
                 "User-Agent": (
                     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
                     "AppleWebKit/537.36 (KHTML, like Gecko) "
@@ -39,7 +48,6 @@ class TroostwijkClient:
             },
             follow_redirects=True,
         )
-        self.request_interval = request_interval
 
     async def aclose(self) -> None:
         await self._client.aclose()
@@ -56,44 +64,41 @@ class TroostwijkClient:
         self,
         query: str,
         max_pages: int = 1,
+        category_id: int | None = None,
         page_size: int = 30,
     ) -> AsyncIterator[Listing]:
-        """Yield Troostwijk lots matching `query`, newest first."""
         for page in range(max_pages):
             params = {
                 "q": query,
                 "offset": page * page_size,
                 "limit": page_size,
                 "sort": "starting_at_desc",
-                "site": "tba-nl",
+                "site": self.tba_site,
             }
             try:
                 data = await self._get(params)
             except Exception as e:
-                log.warning("troostwijk_search_failed", q=query, error=str(e))
+                log.warning("tba_search_failed", site=self.name,
+                            q=query, error=str(e))
                 return
-
             for raw in data.get("lots", []) or data.get("results", []):
                 listing = self._parse(raw)
                 if listing is not None:
                     yield listing
 
-    @staticmethod
-    def _parse(raw: dict) -> Listing | None:
+    def _parse(self, raw: dict) -> Listing | None:
         lot_id = raw.get("id") or raw.get("lotId")
         if not lot_id:
             return None
         title = raw.get("title") or raw.get("name") or ""
         description = raw.get("description") or ""
 
-        # Auctions use "current bid". When there's no bid yet, fall back
-        # to starting bid; mark price_type accordingly.
         bid = raw.get("currentBid") or raw.get("startingBid") or 0
         try:
-            price = float(bid) / 100 if isinstance(bid, int) and bid > 1000 else float(bid)
+            price = (float(bid) / 100
+                     if isinstance(bid, int) and bid > 1000 else float(bid))
         except (TypeError, ValueError):
             price = None
-        ptype = "bidding"
 
         slug = raw.get("slug") or str(lot_id)
         url = f"https://www.tbauctions.com/nl/l/{slug}"
@@ -111,20 +116,39 @@ class TroostwijkClient:
             first = images[0]
             thumb = first if isinstance(first, str) else first.get("url")
 
-        listing = Listing(
-            item_id=f"tba:{lot_id}",
+        return Listing(
+            item_id=f"{self.site_code}:{lot_id}",
             title=title,
             description=description,
             price=price,
-            price_type=ptype,
+            price_type="bidding",
             url=url,
-            seller_name="Troostwijk",
+            seller_name=self.name.title(),
             location=raw.get("location"),
             posted_at=datetime.now(timezone.utc),
             thumbnail_url=thumb,
             category_id=None,
             category_name=raw.get("categoryName"),
+            site=self.name,
+            country=self.country,
             raw={**raw, "ends_at": ends_at.isoformat() if ends_at else None,
-                 "auction_source": "troostwijk"},
+                 "auction_source": self.name},
         )
-        return listing
+
+
+class TroostwijkClient(TBAuctionsBase):
+    def __init__(self, request_interval: float = 2.0):
+        super().__init__(
+            name="troostwijk", site_code="tba", country="NL",
+            tba_site="tba-nl", accept_language="nl-NL,nl;q=0.9",
+            request_interval=request_interval,
+        )
+
+
+class VavatoSource(TBAuctionsBase):
+    def __init__(self, request_interval: float = 2.0):
+        super().__init__(
+            name="vavato", site_code="vav", country="BE",
+            tba_site="vavato-be", accept_language="nl-BE,nl;q=0.9,fr-BE;q=0.7",
+            request_interval=request_interval,
+        )
