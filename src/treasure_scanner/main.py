@@ -13,8 +13,9 @@ from .dashboard import run_dashboard
 from .db import Database
 from .scanner import Scanner
 from .sources import (
-    BVASource, CatawikiSource, KleinanzeigenSource, OVMSource,
-    TroostwijkClient, TweakersVASource, VavatoSource,
+    AuctionetSource, AukroSource, BVASource, CatawikiSource, HoodSource,
+    KleinanzeigenSource, LotTissimoSource, MyDealzSource, OVMSource,
+    QuokaSource, TroostwijkClient, TweakersVASource, VavatoSource,
     make_2dehands, make_2ememain, make_marktplaats,
 )
 from .sources.base import Source
@@ -81,6 +82,13 @@ async def run() -> None:
         VavatoSource(),
         BVASource(browser=browser, use_browser=False),
         OVMSource(),
+        # Sprint D — DE long-tail
+        HoodSource(),
+        AukroSource(),
+        QuokaSource(),
+        AuctionetSource(),
+        LotTissimoSource(),
+        MyDealzSource(),
     ]
     if browser is not None:
         sources.append(CatawikiSource(browser=browser))

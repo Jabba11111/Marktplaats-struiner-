@@ -7,11 +7,13 @@ browser voor sites met anti-bot, en zes waardebronnen.
 
 ## Features
 
-- **10 actieve sources** verspreid over NL/BE/DE:
+- **16 actieve sources** verspreid over NL/BE/DE:
   - **Marktplaatsen**: Marktplaats.nl, 2dehands.be, 2ememain.be,
-    Kleinanzeigen.de, Tweakers V&A
+    Kleinanzeigen.de, Tweakers V&A, Hood.de, Aukro.de, Quoka.de
   - **Veilingen**: Troostwijk, Vavato (BE), BVA-Auctions, Onlineveiling-
-    meester (OVM), Catawiki (via stealth browser)
+    meester (OVM), Catawiki (via stealth browser), Auctionet,
+    Lot-tissimo
+  - **Deal-aggregator**: MyDealz.de (RSS)
 - **Live polling** marktplaatsen (3–5 min), per land geconfigureerd
   per watcher via `countries: [NL, BE, DE]`.
 - **Auction loop** elk uur (lagere prio, lots met `ends_at`).
@@ -128,11 +130,12 @@ Klaar (huidige branch):
 - ✅ **Sprint C (P2)**: Catawiki source, Vavato (BE), BVA-Auctions, OVM
 - ✅ Cross-site dedup (titel+prijs hash)
 - ✅ `countries` + `query_overrides` per watcher
+- ✅ **Sprint D**: Hood.de, Aukro.de, Quoka.de, Auctionet,
+  Lot-tissimo, MyDealz RSS
 
-**Resterend** (zie [`docs/PHASE2_PLAN.md`](docs/PHASE2_PLAN.md)):
-Sprint D (DE long-tail: Hood.de, Aukro.de, Auctionet, Lot-tissimo,
-MyDealz RSS), Sprint E (pHash image dedup, `max_distance_km`,
-auto-tuning request_interval).
+**Resterend**: Sprint E (pHash image dedup, `max_distance_km`
+postcode-filter, auto-tuning request_interval bij 429s). Zie
+[`docs/PHASE2_PLAN.md`](docs/PHASE2_PLAN.md).
 
 ## Layout
 
@@ -153,7 +156,7 @@ src/treasure_scanner/
     app.py
     templates/*.html
     static/style.css
-  sources/                    listing sources (10 total)
+  sources/                    listing sources (16 total)
     base.py                   Source protocol
     marktplaats.py            Adevinta family (mkpl, 2dh, 2em)
     troostwijk.py             TBAuctions family (tba, vav)
@@ -162,6 +165,12 @@ src/treasure_scanner/
     catawiki.py               Catawiki (via stealth browser)
     bva.py                    BVA-Auctions
     ovm.py                    Onlineveilingmeester
+    hood.py                   Hood.de
+    aukro.py                  Aukro.de
+    quoka.py                  Quoka.de
+    auctionet.py              Auctionet (JSON API)
+    lottissimo.py             Lot-tissimo art auctions
+    mydealz.py                MyDealz RSS feed
   valuation/                  six value sources
     base.py
     marktplaats_median.py

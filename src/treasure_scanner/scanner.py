@@ -218,16 +218,19 @@ class Scanner:
 
     # --- loops ---
 
+    AUCTION_SITES = {
+        "troostwijk", "vavato", "catawiki", "bva", "ovm",
+        "auctionet", "lottissimo", "aukro",
+    }
+
     @property
     def _live_sources(self) -> list[Source]:
-        """Marketplace sources (not auction-only). Polled in live_loop."""
-        auction_only = {"troostwijk", "vavato", "catawiki", "bva", "ovm"}
-        return [s for s in self.sources if s.name not in auction_only]
+        """Marketplace + deal sources. Polled in live_loop."""
+        return [s for s in self.sources if s.name not in self.AUCTION_SITES]
 
     @property
     def _auction_sources(self) -> list[Source]:
-        auction = {"troostwijk", "vavato", "catawiki", "bva", "ovm"}
-        return [s for s in self.sources if s.name in auction]
+        return [s for s in self.sources if s.name in self.AUCTION_SITES]
 
     async def live_loop(self) -> None:
         while True:
