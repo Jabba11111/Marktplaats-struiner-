@@ -1,0 +1,138 @@
+# Marktplaats watchers. Reloaded automatically when this file changes.
+#
+# Each watcher has:
+#   name:          short identifier (used in Telegram)
+#   query:         search keywords (Marktplaats q= parameter)
+#   category_id:   optional Marktplaats category id to narrow search
+#   min_price:     optional, skip listings below
+#   max_price:     optional, skip listings above
+#   require:       list of regex patterns (case-insensitive) that MUST match
+#                  title+description for the listing to pass
+#   require_any:   list of regex patterns where at least one must match
+#   blacklist:     regex patterns that disqualify the listing
+#   value_sources: which valuation sources to consult (in order)
+#   min_score:     0-100, alert threshold
+#   priority:      higher = louder Telegram alert
+#
+# AI/ML server hunt — your main target.
+
+watchers:
+  - name: "AI Workstation/Server (RAM+GPU)"
+    query: "workstation"
+    require_any:
+      - "(?i)\\b(32|48|64|96|128|192|256)\\s?gb"
+    require:
+      - "(?i)(rtx\\s?30(70|80|90)|rtx\\s?40(70|80|90)|a4000|a5000|a6000|tesla|quadro|p40|p100|v100|mi(25|50|60|100|200|210|250|300))"
+    blacklist:
+      - "(?i)(kapot|defect|onderdelen|broken|for parts|gestolen)"
+    max_price: 3500
+    value_sources: [marktplaats_median, ebay_sold]
+    min_score: 55
+    priority: high
+
+  - name: "RTX 3090 / 4090 los"
+    query: "RTX 3090"
+    blacklist:
+      - "(?i)(kapot|defect|onderdelen|geen beeld|niet werkend)"
+    max_price: 1200
+    value_sources: [marktplaats_median, ebay_sold, tweakers]
+    min_score: 50
+    priority: high
+
+  - name: "RTX 4090 los"
+    query: "RTX 4090"
+    blacklist:
+      - "(?i)(kapot|defect|onderdelen|geen beeld|niet werkend)"
+    max_price: 2200
+    value_sources: [marktplaats_median, ebay_sold, tweakers]
+    min_score: 45
+    priority: high
+
+  - name: "Tesla/Quadro datacenter GPU"
+    query: "Tesla GPU"
+    require_any:
+      - "(?i)(tesla|quadro)\\s?(p40|p100|v100|a100|a40|a30|a10)"
+    max_price: 2500
+    value_sources: [ebay_sold]
+    min_score: 55
+    priority: high
+
+  - name: "Dell/HP/Lenovo workstation"
+    query: "Dell Precision"
+    require_any:
+      - "(?i)(precision|z440|z640|z840|thinkstation\\s?p(3|5|7|9)\\d{2})"
+    require:
+      - "(?i)\\b(32|48|64|96|128|192|256)\\s?gb"
+    max_price: 1800
+    value_sources: [marktplaats_median, ebay_sold]
+    min_score: 50
+    priority: medium
+
+# Antiek & Kunst
+  - name: "Antiek zilver"
+    query: "zilver antiek"
+    category_id: 1
+    require_any:
+      - "(?i)(\\.925|sterling|gehalte|hallmark|meesterteken)"
+    blacklist:
+      - "(?i)(verzilverd|silver plated|plated)"
+    max_price: 500
+    value_sources: [marktplaats_median]
+    min_score: 45
+    priority: medium
+
+  - name: "Meissen / Royal Copenhagen"
+    query: "Meissen"
+    require_any:
+      - "(?i)(meissen|royal copenhagen|kpm|nymphenburg)"
+    max_price: 400
+    value_sources: [marktplaats_median]
+    min_score: 50
+    priority: medium
+
+# Audio & Hifi
+  - name: "Marantz vintage"
+    query: "Marantz receiver"
+    require_any:
+      - "(?i)marantz\\s?\\d{4}"
+    blacklist:
+      - "(?i)(defect|kapot|geen geluid|onderdelen)"
+    max_price: 800
+    value_sources: [marktplaats_median, ebay_sold]
+    min_score: 50
+    priority: medium
+
+  - name: "McIntosh / Quad"
+    query: "McIntosh"
+    require_any:
+      - "(?i)(mcintosh|quad esl|quad 33|quad 34|quad 405|quad 606)"
+    max_price: 2500
+    value_sources: [ebay_sold]
+    min_score: 55
+    priority: high
+
+  - name: "Technics SL-1200"
+    query: "Technics SL-1200"
+    blacklist:
+      - "(?i)(defect|kapot|onderdelen)"
+    max_price: 700
+    value_sources: [marktplaats_median, ebay_sold]
+    min_score: 45
+    priority: medium
+
+# Keyword sweep — listings die "nalatenschap" achtige signalen bevatten,
+# ongeacht categorie. Lagere drempel, lager prioriteit.
+keyword_sweep:
+  enabled: true
+  patterns:
+    - "(?i)nalatenschap"
+    - "(?i)zolderopruiming"
+    - "(?i)geen idee wat het waard"
+    - "(?i)moet (snel )?weg"
+    - "(?i)vader (is )?overleden"
+    - "(?i)opa['s ]+spullen"
+    - "(?i)geërfd|geerfd"
+  min_price: 20
+  max_price: 500
+  min_score: 35
+  priority: low

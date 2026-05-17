@@ -1,0 +1,11 @@
+services:
+  scanner:
+    build: .
+    container_name: treasure-scanner
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      - ./data:/app/data
+      - ./config:/app/config
+    environment:
+      - TZ=Europe/Amsterdam
