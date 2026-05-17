@@ -223,6 +223,35 @@ class Database:
                 "SELECT DISTINCT site FROM listings ORDER BY site"
             ) if r["site"]]
 
+    def source_health(self) -> list[dict]:
+        """Per-source activity stats for the health dashboard.
+
+        Returns site, country, totals over 1h/24h/7d, last_seen_at and
+        a sample latest listing url. Sources that have never produced
+        a listing are NOT included here — the dashboard merges them
+        with the configured-source list to flag silent sources.
+        """
+        from datetime import datetime, timedelta, timezone
+        now = datetime.now(timezone.utc)
+        c1h = (now - timedelta(hours=1)).isoformat()
+        c24h = (now - timedelta(hours=24)).isoformat()
+        c7d = (now - timedelta(days=7)).isoformat()
+        with self.connect() as conn:
+            rows = conn.execute(
+                """SELECT site, country,
+                          COUNT(*) AS total,
+                          SUM(CASE WHEN last_seen_at >= ? THEN 1 ELSE 0 END) AS count_1h,
+                          SUM(CASE WHEN last_seen_at >= ? THEN 1 ELSE 0 END) AS count_24h,
+                          SUM(CASE WHEN last_seen_at >= ? THEN 1 ELSE 0 END) AS count_7d,
+                          MAX(last_seen_at) AS last_seen_at
+                   FROM listings
+                   WHERE site IS NOT NULL
+                   GROUP BY site, country
+                   ORDER BY last_seen_at DESC""",
+                (c1h, c24h, c7d),
+            ).fetchall()
+            return [dict(r) for r in rows]
+
     def recent_alerts(self, limit: int = 50) -> list[dict]:
         with self.connect() as conn:
             rows = conn.execute(

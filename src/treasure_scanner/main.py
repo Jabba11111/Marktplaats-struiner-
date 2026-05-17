@@ -123,7 +123,9 @@ async def run() -> None:
         asyncio.create_task(scanner.auction_loop(), name="auction"),
     ]
     if cfg.dashboard_enabled:
-        tasks.append(asyncio.create_task(run_dashboard(cfg, db), name="dashboard"))
+        tasks.append(asyncio.create_task(
+            run_dashboard(cfg, db, sources=sources), name="dashboard",
+        ))
 
     log.info("sources_registered",
              names=[s.name for s in sources],

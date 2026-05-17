@@ -82,4 +82,6 @@ def test_mutes_add_and_delete(app):
 def test_healthz(app):
     application, _ = app
     client = TestClient(application)
-    assert client.get("/healthz").json() == {"ok": True}
+    payload = client.get("/healthz").json()
+    assert payload["ok"] is True
+    assert "sources" in payload

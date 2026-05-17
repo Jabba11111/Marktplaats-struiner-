@@ -1,0 +1,48 @@
+{% extends "_base.html" %}
+{% block content %}
+<h2>Health</h2>
+<p class="muted">
+  <span class="status-dot status-ok"></span> ok = ≥1 listing in 24u ·
+  <span class="status-dot status-quiet"></span> quiet = niets in 24u maar wel in 7d ·
+  <span class="status-dot status-silent"></span> silent = 7d niks ·
+  <span class="status-dot status-throttled"></span> throttled = backoff actief ·
+  <span class="status-dot status-orphan"></span> orphan = niet langer geconfigureerd
+</p>
+
+<table>
+  <thead>
+    <tr>
+      <th>Status</th><th>Site</th><th>Land</th>
+      <th>1u</th><th>24u</th><th>7d</th><th>Totaal</th>
+      <th>Laatst</th><th>Throttle (s)</th>
+    </tr>
+  </thead>
+  <tbody>
+  {% for r in rows %}
+    <tr>
+      <td>
+        <span class="status-dot status-{{ r.status }}"></span>
+        <small class="status-label">{{ r.status }}</small>
+      </td>
+      <td><strong>{{ r.site }}</strong>{% if not r.configured %} <small>(orphan)</small>{% endif %}</td>
+      <td>{{ r.country }}</td>
+      <td>{{ r.count_1h or 0 }}</td>
+      <td>{{ r.count_24h or 0 }}</td>
+      <td>{{ r.count_7d or 0 }}</td>
+      <td>{{ r.total or 0 }}</td>
+      <td><small>{{ r.last_seen_at[:16].replace('T', ' ') if r.last_seen_at else '—' }}</small></td>
+      <td>
+        {% if r.throttle_current is not none %}
+          {{ r.throttle_current }} / {{ r.throttle_base }}
+          {% if r.throttle_failures %}<small>· {{ r.throttle_failures }} fails</small>{% endif %}
+        {% else %}—{% endif %}
+      </td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+
+{% if not rows %}
+<p>Nog geen sources actief.</p>
+{% endif %}
+{% endblock %}

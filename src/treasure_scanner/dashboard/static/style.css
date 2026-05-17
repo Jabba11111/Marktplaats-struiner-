@@ -137,6 +137,23 @@ input, select, button {
   color: var(--text);
   border-radius: 4px;
 }
+.muted { color: var(--muted); font-size: 12px; }
+
+.status-dot {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  margin-right: 6px;
+  vertical-align: middle;
+}
+.status-ok        { background: var(--high); }
+.status-quiet     { background: var(--mid); }
+.status-silent    { background: var(--low); }
+.status-throttled { background: #ff9a44; }
+.status-orphan    { background: var(--muted); }
+.status-label { color: var(--muted); text-transform: uppercase; font-size: 11px; letter-spacing: .04em; }
+
 .site-tag {
   display: inline-block;
   font-size: 11px;

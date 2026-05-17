@@ -11,6 +11,7 @@ from fastapi.templating import Jinja2Templates
 
 from ..config import Config
 from ..db import Database
+from ..sources.base import Source
 
 log = structlog.get_logger(__name__)
 
@@ -18,7 +19,11 @@ BASE = Path(__file__).parent
 TEMPLATES = Jinja2Templates(directory=str(BASE / "templates"))
 
 
-def build_app(cfg: Config, db: Database) -> FastAPI:
+def build_app(
+    cfg: Config,
+    db: Database,
+    sources: list[Source] | None = None,
+) -> FastAPI:
     app = FastAPI(title="Treasure Scanner", docs_url=None, redoc_url=None)
     app.mount("/static", StaticFiles(directory=str(BASE / "static")), name="static")
 
@@ -107,15 +112,84 @@ def build_app(cfg: Config, db: Database) -> FastAPI:
         db.remove_mute(pattern)
         return RedirectResponse("/mutes", status_code=303)
 
+    @app.get("/health", response_class=HTMLResponse)
+    async def health(request: Request):
+        rows = db.source_health()
+        seen = {(r["site"], r["country"]): r for r in rows}
+
+        merged: list[dict] = []
+        configured_keys = set()
+        if sources:
+            for s in sources:
+                key = (s.name, s.country)
+                configured_keys.add(key)
+                row = seen.get(key) or {
+                    "site": s.name, "country": s.country,
+                    "total": 0, "count_1h": 0, "count_24h": 0, "count_7d": 0,
+                    "last_seen_at": None,
+                }
+                row = dict(row)
+                throttle = getattr(s, "throttle", None)
+                if throttle is not None:
+                    row["throttle_current"] = round(throttle.current, 1)
+                    row["throttle_base"] = round(throttle.base, 1)
+                    row["throttle_failures"] = throttle.consecutive_failures
+                else:
+                    row["throttle_current"] = None
+                    row["throttle_base"] = None
+                    row["throttle_failures"] = 0
+                row["configured"] = True
+                row["status"] = _classify(row)
+                merged.append(row)
+
+        for key, row in seen.items():
+            if key in configured_keys:
+                continue
+            row = dict(row)
+            row["configured"] = False
+            row["throttle_current"] = row["throttle_base"] = None
+            row["throttle_failures"] = 0
+            row["status"] = "orphan"
+            merged.append(row)
+
+        status_order = {"silent": 0, "throttled": 1, "quiet": 2, "ok": 3, "orphan": 4}
+        merged.sort(key=lambda r: (status_order.get(r["status"], 9),
+                                   -(r.get("count_24h") or 0)))
+
+        return TEMPLATES.TemplateResponse(
+            request, "health.html", {"rows": merged},
+        )
+
     @app.get("/healthz")
     async def healthz():
-        return {"ok": True}
+        rows = db.source_health()
+        return {
+            "ok": True,
+            "sources": [
+                {"site": r["site"], "country": r["country"],
+                 "count_24h": r["count_24h"],
+                 "last_seen_at": r["last_seen_at"]}
+                for r in rows
+            ],
+        }
 
     return app
 
 
-async def run_dashboard(cfg: Config, db: Database) -> None:
-    app = build_app(cfg, db)
+def _classify(row: dict) -> str:
+    if row.get("throttle_failures", 0) >= 3:
+        return "throttled"
+    if (row.get("count_24h") or 0) > 0:
+        return "ok"
+    if (row.get("count_7d") or 0) > 0:
+        return "quiet"
+    return "silent"
+
+
+async def run_dashboard(
+    cfg: Config, db: Database, sources: list[Source] | None = None,
+) -> None:
+    app = build_app(cfg, db, sources=sources)
     config = uvicorn.Config(
         app, host=cfg.dashboard_host, port=cfg.dashboard_port,
         log_level="warning", access_log=False,

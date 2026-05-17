@@ -40,7 +40,9 @@ browser voor sites met anti-bot, en zes waardebronnen.
   /mute /unmute /mutes` + inline action buttons op iedere alert.
 - **Web dashboard** op `:8765` met statspagina, listings-filter
   (site, land, score), alerts-grid, watcher-beheer
-  (toevoegen/verwijderen ad-hoc), mute-beheer.
+  (toevoegen/verwijderen ad-hoc), mute-beheer, en een **health-pagina**
+  die per source toont: listings in 1u/24u/7d, laatst gezien,
+  actuele throttle-interval en status (ok/quiet/silent/throttled).
 
 ## Setup
 
